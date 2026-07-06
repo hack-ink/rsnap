@@ -133,4 +133,4 @@ add a new research contract.
 - `https://github.com/ShareX/ShareX`
 - `https://www.xnipapp.com/scrolling-capture/`
 - `https://cleanshot.com/docs-api`
-- `packages/rsnap-overlay/src/scroll_capture/tests.rs`
+- `packages/rsnap-capture-core/src/scroll_capture/tests.rs`

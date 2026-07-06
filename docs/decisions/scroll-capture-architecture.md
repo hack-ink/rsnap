@@ -77,7 +77,7 @@ prevents feedback loops.
 
 Rust owns all commit decisions:
 
-- Vision pairwise registration can propose downward motion between adjacent ordered frames.
+- Rust pairwise registration can propose downward motion between adjacent ordered frames.
 - Pixel overlap corroboration must confirm the proposal before append.
 - Growth is monotonic and downward-only.
 - A blocked overshot frame does not become the committed frontier.

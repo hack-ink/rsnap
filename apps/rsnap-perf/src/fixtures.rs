@@ -12,7 +12,7 @@ use rsnap_capture_core::{
 	DisplayPointRect, FrozenSelectionTransformInput, FrozenSelectionTransformKind, RectPoints,
 	ScrollMinimapInput, ToolbarItemKind,
 };
-use rsnap_overlay::bench_support::{
+use rsnap_capture_core::{
 	ScrollCaptureBenchScenario, ScrollCaptureOverlapMetrics, ScrollCaptureSessionMetrics,
 };
 use rsnap_overlay::frozen_edit::{

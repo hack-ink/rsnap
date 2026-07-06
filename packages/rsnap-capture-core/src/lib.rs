@@ -12,9 +12,12 @@ pub mod geometry;
 pub mod minimap;
 pub mod mosaic;
 pub mod protocol;
+pub mod scroll_stitching;
 pub mod selection_transform;
 pub mod session;
 pub mod wallpaper;
+
+mod scroll_capture;
 
 pub use self::{
 	auto_center::{
@@ -46,6 +49,11 @@ pub use self::{
 		HostEvent, HostReport, HostRequest, HudModel, OutputNaming, PermissionKind, PlatformTag,
 		PreparedHostEffectRequest, SceneModel, SessionConfig, ToolbarItemKind, ToolbarItemModel,
 	},
+	scroll_capture::bench_support::{
+		ScrollCaptureBenchHarness, ScrollCaptureBenchScenario, ScrollCaptureFingerprintMetrics,
+		ScrollCaptureOverlapMetrics, ScrollCaptureSessionMetrics,
+	},
+	scroll_stitching::{ScrollStitchImage, ScrollStitchObserveOutcome, ScrollStitchSession},
 	selection_transform::{
 		FrozenSelectionTransformInput, FrozenSelectionTransformKind,
 		frozen_selection_transform_hit_test, frozen_selection_transform_rect,
@@ -55,3 +63,6 @@ pub use self::{
 		capture_frame_wallpaper_png_thumbnail, capture_frame_wallpaper_png_thumbnail_cached,
 	},
 };
+
+#[cfg(test)]
+use criterion as _;

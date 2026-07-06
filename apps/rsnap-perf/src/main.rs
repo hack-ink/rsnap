@@ -14,7 +14,7 @@ use rsnap_capture_core::{
 	CaptureFrameRenderKind, CaptureFrameSourceKind, DisplayPointRect, FrozenSelectionTransformKind,
 	RectPoints,
 };
-use rsnap_overlay::bench_support::{
+use rsnap_capture_core::{
 	ScrollCaptureBenchHarness, ScrollCaptureBenchScenario, ScrollCaptureFingerprintMetrics,
 	ScrollCaptureOverlapMetrics, ScrollCaptureSessionMetrics,
 };
