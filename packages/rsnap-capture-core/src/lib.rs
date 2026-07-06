@@ -8,6 +8,7 @@ pub mod auto_center;
 pub mod bgra_frame;
 pub mod capture_frame;
 pub mod export;
+pub mod frozen_edit;
 pub mod frozen_overlay_export;
 pub mod geometry;
 pub mod minimap;
@@ -40,6 +41,14 @@ pub use self::{
 	export::{
 		RgbaExportImage, crop_export_image, crop_rgba_image, encode_png_lossless_fast,
 		encode_png_lossless_fast_with_screen_scale,
+	},
+	frozen_edit::{
+		FrozenOverlayEditArrow, FrozenOverlayEditColor, FrozenOverlayEditElement,
+		FrozenOverlayEditMosaic, FrozenOverlayEditPen, FrozenOverlayEditPoint,
+		FrozenOverlayEditRect, FrozenOverlayEditSession, FrozenOverlayEditSnapshot,
+		FrozenOverlayEditSpotlight, FrozenOverlayEditSpotlightStyle, FrozenOverlayEditStrokeStyle,
+		FrozenOverlayEditStyle, FrozenOverlayEditText, FrozenOverlayEditTextStyle,
+		FrozenOverlayTextEdit,
 	},
 	frozen_overlay_export::{
 		FrozenOverlayExportArrow, FrozenOverlayExportElement, FrozenOverlayExportMosaic,

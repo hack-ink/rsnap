@@ -17,4 +17,3 @@ path = "src/main.rs"
 color-eyre         = { workspace = true }
 image              = { workspace = true }
 rsnap-capture-core = { workspace = true }
-rsnap-overlay      = { workspace = true }
