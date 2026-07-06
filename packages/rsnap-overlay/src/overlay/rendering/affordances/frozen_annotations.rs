@@ -4,7 +4,7 @@ use std::time::Instant;
 use egui::text::CCursor;
 use egui::{Context, FontDefinitions, FontId, Galley, RawInput};
 
-use crate::overlay::frozen_brush_runtime::FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS;
+use crate::overlay::frozen_brush_model::{self, FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS};
 use crate::overlay::rendering;
 use crate::overlay::rendering::FROZEN_TEXT_CARET_BLINK_PERIOD_SECS;
 use crate::overlay::rendering::{SelectionDashedBorderCache, WindowRenderer};
@@ -161,7 +161,7 @@ impl WindowRenderer {
 		let Some(active_stroke) = &frozen_brush_state.active_stroke else {
 			return false;
 		};
-		let preview_points = OverlaySession::preview_frozen_brush_points(active_stroke);
+		let preview_points = frozen_brush_model::preview_points(active_stroke);
 
 		Self::paint_frozen_brush_stroke(
 			painter,
@@ -177,10 +177,8 @@ impl WindowRenderer {
 		radius: f32,
 		color: Color32,
 	) -> bool {
-		let rendered_points = OverlaySession::rendered_frozen_brush_points(
-			points,
-			FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS,
-		);
+		let rendered_points =
+			frozen_brush_model::rendered_points(points, FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS);
 
 		match rendered_points.as_slice() {
 			[] => false,
