@@ -1,22 +1,10 @@
-//! Public macOS live-frame sampling bridge used by the native host FFI layer.
+//! Public macOS live-frame region bridge used by the native host FFI layer.
 
-use crate::live_frame_stream_macos::{CursorSampleRequest, MacLiveFrameStream};
-use crate::state::{GlobalPoint, LiveCursorSample, MonitorRect, RectPoints};
-
-/// Live cursor sample plus the ScreenCaptureKit frame metadata that produced it.
-pub struct HostLiveCursorSample {
-	/// Sampled RGB and optional patch payload.
-	pub sample: LiveCursorSample,
-	/// Age of the sampled ScreenCaptureKit frame in microseconds.
-	pub frame_age_micros: u64,
-	/// Monotonic live stream frame sequence.
-	pub frame_seq: u64,
-	/// Live stream generation for the active monitor stream.
-	pub stream_generation: u64,
-}
+use crate::live_frame_stream_macos::MacLiveFrameStream;
+use crate::state::{GlobalPoint, MonitorRect, RectPoints};
 
 /// Thin public wrapper around the proven macOS live frame stream used by the
-/// native host for RGB and loupe sampling.
+/// native host for RGBA region continuity.
 pub struct HostMacLiveSampler {
 	stream: MacLiveFrameStream,
 }
@@ -37,62 +25,6 @@ impl HostMacLiveSampler {
 				self_capture_exception_window_ids,
 			),
 		}
-	}
-
-	#[must_use]
-	/// Samples the current RGB value and optional loupe patch at the given point.
-	pub fn sample_cursor(
-		&mut self,
-		monitor: MonitorRect,
-		point: GlobalPoint,
-		patch_width_px: u32,
-		patch_height_px: u32,
-	) -> LiveCursorSample {
-		let Some((x_px, y_px)) = monitor.local_u32_pixels(point) else {
-			return LiveCursorSample { rgb: None, patch: None };
-		};
-
-		self.stream
-			.latest_cursor_sample(
-				monitor,
-				CursorSampleRequest::with_optional_patch(
-					x_px,
-					y_px,
-					patch_width_px > 0 && patch_height_px > 0,
-					patch_width_px,
-					patch_height_px,
-				),
-			)
-			.unwrap_or(LiveCursorSample { rgb: None, patch: None })
-	}
-
-	#[must_use]
-	/// Samples the current RGB value and optional loupe patch with frame provenance.
-	pub fn sample_cursor_with_metadata(
-		&mut self,
-		monitor: MonitorRect,
-		point: GlobalPoint,
-		patch_width_px: u32,
-		patch_height_px: u32,
-	) -> Option<HostLiveCursorSample> {
-		let (x_px, y_px) = monitor.local_u32_pixels(point)?;
-		let sample = self.stream.latest_cursor_frame_sample(
-			monitor,
-			CursorSampleRequest::with_optional_patch(
-				x_px,
-				y_px,
-				patch_width_px > 0 && patch_height_px > 0,
-				patch_width_px,
-				patch_height_px,
-			),
-		)?;
-
-		Some(HostLiveCursorSample {
-			sample: sample.sample,
-			frame_age_micros: sample.frame_age.as_micros().min(u128::from(u64::MAX)) as u64,
-			frame_seq: sample.frame_seq,
-			stream_generation: sample.stream_generation,
-		})
 	}
 
 	/// Starts warming the ScreenCaptureKit stream for the requested monitor without
@@ -202,24 +134,6 @@ impl HostMacLiveSampler {
 				height: frame.image.height(),
 				rgba: frame.image.into_raw(),
 			},
-		})
-	}
-
-	#[must_use]
-	/// Returns the latest cached full-monitor RGBA snapshot when one is already warm.
-	///
-	/// This does not block on a fresh capture. When the latest frame is unavailable, the
-	/// underlying stream is primed and `None` is returned.
-	/// The returned payload intentionally does not carry frame age or sequence metadata, so it
-	/// must not be used as the first frozen screenshot frame.
-	pub fn peek_latest_monitor_rgba(&self, monitor: MonitorRect) -> Option<HostRgbaRegion> {
-		let snapshot = self.stream.peek_latest_rgba_snapshot(monitor)?;
-		let image = snapshot.image.as_ref();
-
-		Some(HostRgbaRegion {
-			width: image.width(),
-			height: image.height(),
-			rgba: image.clone().into_raw(),
 		})
 	}
 }

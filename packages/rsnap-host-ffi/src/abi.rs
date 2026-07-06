@@ -4,7 +4,6 @@ mod capture_frame;
 mod frozen_overlay;
 mod geometry;
 mod handles;
-mod live;
 mod scroll;
 mod session;
 mod status;
@@ -21,14 +20,13 @@ pub use self::frozen_overlay::{
 };
 pub use self::geometry::{
 	RsnapFloatPoint, RsnapFloatRect, RsnapMonitorRect, RsnapOwnedBytes, RsnapOwnedRgbaRegion,
-	RsnapPixelRect, RsnapPoint, RsnapRect, RsnapRgb, RsnapRgbaRegion, RsnapWindowRect,
+	RsnapPixelRect, RsnapPoint, RsnapRect, RsnapRgb, RsnapWindowRect,
 };
 #[cfg(target_os = "macos")]
 pub use self::handles::RsnapLiveSamplerHandle;
 pub use self::handles::{
 	RsnapFrozenOverlayEditSessionHandle, RsnapScrollSessionHandle, RsnapSessionHandle,
 };
-pub use self::live::RsnapLiveSample;
 pub use self::scroll::{
 	RsnapScrollMinimapPlan, RsnapScrollObserveOutcomeKind, RsnapScrollObserveResult,
 };
@@ -41,15 +39,12 @@ pub use self::session::{
 pub use self::status::RsnapStatus;
 
 /// ABI version exported by the thin C host bridge.
-pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 36;
+pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 37;
 
 /// Maximum frozen toolbar items copied into one scene snapshot.
 pub(crate) const RSNAP_TOOLBAR_ITEM_CAPACITY: usize = 16;
 /// Maximum UTF-8 status-message bytes copied into fixed-size ABI payloads.
 pub(crate) const RSNAP_STATUS_MESSAGE_CAPACITY: usize = 256;
-/// Maximum live-sampler loupe patch bytes copied into one cursor sample.
-pub(crate) const RSNAP_LIVE_SAMPLE_PATCH_CAPACITY: usize = 4_096;
-
 pub(crate) fn frozen_overlay_empty_element() -> RsnapFrozenOverlayExportElement {
 	self::frozen_overlay::frozen_overlay_empty_element()
 }

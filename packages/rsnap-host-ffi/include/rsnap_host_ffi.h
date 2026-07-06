@@ -8,10 +8,9 @@
 extern "C" {
 #endif
 
-#define RSNAP_HOST_FFI_ABI_VERSION 36u
+#define RSNAP_HOST_FFI_ABI_VERSION 37u
 #define RSNAP_TOOLBAR_ITEM_CAPACITY 16u
 #define RSNAP_STATUS_MESSAGE_CAPACITY 256u
-#define RSNAP_LIVE_SAMPLE_PATCH_CAPACITY 4096u
 
 typedef struct RsnapSessionHandle RsnapSessionHandle;
 typedef struct RsnapLiveSamplerHandle RsnapLiveSamplerHandle;
@@ -213,27 +212,6 @@ typedef struct RsnapHostRequestValue {
 	uint8_t has_selection;
 	uint8_t selection_editable;
 } RsnapHostRequestValue;
-
-typedef struct RsnapLiveSample {
-	struct RsnapRgb rgb;
-	uint8_t has_rgb;
-	uint8_t has_frame_metadata;
-	uint64_t frame_age_micros;
-	uint64_t frame_seq;
-	uint64_t stream_generation;
-	uint32_t patch_width;
-	uint32_t patch_height;
-	uint32_t patch_len;
-	uint8_t patch_rgba[RSNAP_LIVE_SAMPLE_PATCH_CAPACITY];
-} RsnapLiveSample;
-
-typedef struct RsnapRgbaRegion {
-	uint32_t width;
-	uint32_t height;
-	size_t len;
-	size_t capacity;
-	uint8_t *rgba;
-} RsnapRgbaRegion;
 
 typedef struct RsnapOwnedRgbaRegion {
 	uint32_t width;
@@ -715,20 +693,6 @@ enum RsnapStatus rsnap_session_take_next_request(
 	RsnapSessionHandle *handle,
 	struct RsnapHostRequestValue *out_request
 );
-enum RsnapStatus rsnap_live_sampler_sample_cursor(
-	RsnapLiveSamplerHandle *handle,
-	struct RsnapMonitorRect monitor,
-	struct RsnapPoint point,
-	uint32_t patch_width_px,
-	uint32_t patch_height_px,
-	struct RsnapLiveSample *out_sample
-);
-enum RsnapStatus rsnap_live_sampler_peek_region_rgba(
-	RsnapLiveSamplerHandle *handle,
-	struct RsnapMonitorRect monitor,
-	struct RsnapRect rect,
-	struct RsnapRgbaRegion *out_region
-);
 enum RsnapStatus rsnap_live_sampler_take_region_rgba(
 	RsnapLiveSamplerHandle *handle,
 	struct RsnapMonitorRect monitor,
@@ -753,16 +717,6 @@ enum RsnapStatus rsnap_live_sampler_take_next_region_rgba_pixels_after_seq(
 	uint8_t wait_for_fresh,
 	uint64_t *out_frame_seq,
 	uint64_t *out_frame_age_micros,
-	struct RsnapOwnedRgbaRegion *out_region
-);
-enum RsnapStatus rsnap_live_sampler_peek_latest_monitor_rgba(
-	RsnapLiveSamplerHandle *handle,
-	struct RsnapMonitorRect monitor,
-	struct RsnapRgbaRegion *out_region
-);
-enum RsnapStatus rsnap_live_sampler_take_latest_monitor_rgba(
-	RsnapLiveSamplerHandle *handle,
-	struct RsnapMonitorRect monitor,
 	struct RsnapOwnedRgbaRegion *out_region
 );
 void rsnap_owned_rgba_region_release(struct RsnapOwnedRgbaRegion *region);

@@ -22,12 +22,6 @@ final class LiveFrameStreamBroker: @unchecked Sendable {
 	private var lastPrimedMonitorID: UInt32?
 	private var lastPrimeGeneration: UInt64 = 0
 	private var lastPrimeUptime: TimeInterval = 0
-	private var activeTelemetryCaptureID: UInt64 = 0
-	private var telemetryStartedAtUptime: TimeInterval?
-	private var didEmitFirstRgbSample = false
-	private var didEmitEmptyDiagnosticSample = false
-	private var didEmitRgbDiagnosticSample = false
-	private var issueDiagnosticSamplesRemaining = 0
 
 	func prepareSampler(reason: String = "unspecified") {
 		let startedAt = ProcessInfo.processInfo.systemUptime
@@ -79,18 +73,7 @@ final class LiveFrameStreamBroker: @unchecked Sendable {
 	}
 
 	func start(for screens: [NSScreen], prewarmPoint: CGPoint? = nil, captureID: UInt64 = 0) {
-		let startedAt = ProcessInfo.processInfo.systemUptime
 		stateLock.lock()
-		if captureID != 0,
-			activeTelemetryCaptureID != captureID || telemetryStartedAtUptime == nil
-		{
-			activeTelemetryCaptureID = captureID
-			telemetryStartedAtUptime = startedAt
-			didEmitFirstRgbSample = false
-			didEmitEmptyDiagnosticSample = false
-			didEmitRgbDiagnosticSample = false
-			issueDiagnosticSamplesRemaining = 4
-		}
 		if sampler == nil {
 			sampler = Self.makeSampler(exceptionWindowIDs: selfCaptureExceptionWindowIDs)
 		}
@@ -126,12 +109,6 @@ final class LiveFrameStreamBroker: @unchecked Sendable {
 		lastPrimedMonitorID = nil
 		lastPrimeGeneration = 0
 		lastPrimeUptime = 0
-		activeTelemetryCaptureID = 0
-		telemetryStartedAtUptime = nil
-		didEmitFirstRgbSample = false
-		didEmitEmptyDiagnosticSample = false
-		didEmitRgbDiagnosticSample = false
-		issueDiagnosticSamplesRemaining = 0
 		let sampler = self.sampler
 		stateLock.unlock()
 		guard let sampler else {
@@ -140,97 +117,8 @@ final class LiveFrameStreamBroker: @unchecked Sendable {
 		try? sampler.reset()
 	}
 
-	func sample(at point: CGPoint, sidePixels: Int) -> LiveChromeSample? {
-		let sampleStartedAt = ProcessInfo.processInfo.systemUptime
-		stateLock.lock()
-		let sampler = self.sampler
-		let captureID = activeTelemetryCaptureID
-		stateLock.unlock()
-		guard let sampler, let monitor = monitor(containing: point) else {
-			emitDiagnosticSampleIfNeeded(
-				captureID: captureID,
-				startedAt: sampleStartedAt,
-				outcome: "inactive",
-				frameAgeMilliseconds: -1,
-				hasPatch: false
-			)
-			return nil
-		}
-		let samplerPoint = Self.appKitPointToQuartz(point, mainDisplayHeight: mainDisplayHeight)
-		guard
-			let sample = try? sampler.sampleCursor(
-				monitor: samplerMonitorSnapshot(for: monitor),
-				point: samplerPoint,
-				patchSidePixels: sidePixels
-			)
-		else {
-			emitDiagnosticSampleIfNeeded(
-				captureID: captureID,
-				startedAt: sampleStartedAt,
-				outcome: "empty",
-				frameAgeMilliseconds: -1,
-				hasPatch: false
-			)
-			return nil
-		}
-		guard let capturedAtUptime = sample.capturedAtUptime else {
-			emitDiagnosticSampleIfNeeded(
-				captureID: captureID,
-				startedAt: sampleStartedAt,
-				outcome: "missing_metadata",
-				frameAgeMilliseconds: -1,
-				hasPatch: sample.patchRGBA != nil
-			)
-			return nil
-		}
-		let frameAge = ProcessInfo.processInfo.systemUptime - capturedAtUptime
-		let frameAgeMilliseconds = frameAge * 1_000
-		guard frameAge <= LiveRgbSample.maximumDisplayAge else {
-			emitDiagnosticSampleIfNeeded(
-				captureID: captureID,
-				startedAt: sampleStartedAt,
-				outcome: "stale",
-				frameAgeMilliseconds: frameAgeMilliseconds,
-				hasPatch: sample.patchRGBA != nil
-			)
-			return nil
-		}
-		guard sample.rgb != nil else {
-			emitDiagnosticSampleIfNeeded(
-				captureID: captureID,
-				startedAt: sampleStartedAt,
-				outcome: "no_rgb",
-				frameAgeMilliseconds: frameAgeMilliseconds,
-				hasPatch: sample.patchRGBA != nil
-			)
-			return nil
-		}
-
-		let chromeSample = LiveChromeSample(
-			rgbSample: sample.rgb,
-			rgbCapturedAtUptime: capturedAtUptime,
-			rgbSource: "live_stream",
-			loupePatch: cgImage(from: sample)
-		)
-		emitDiagnosticSampleIfNeeded(
-			captureID: captureID,
-			startedAt: sampleStartedAt,
-			outcome: "rgb",
-			frameAgeMilliseconds: frameAgeMilliseconds,
-			hasPatch: chromeSample.loupePatch != nil
-		)
-		emitFirstRgbTelemetryIfNeeded(chromeSample)
-		return chromeSample
-	}
-
-	func rgbSample(at point: CGPoint) -> LiveRgbSample? {
-		sample(at: point, sidePixels: 0)?.rgb
-	}
-
 	func patch(in rect: CGRect) -> CGImage? {
-		let point = CGPoint(x: rect.midX, y: rect.midY)
-		let sidePixels = max(Int(rect.width.rounded()), Int(rect.height.rounded()), 1)
-		return sample(at: point, sidePixels: sidePixels)?.loupePatch
+		region(in: rect)
 	}
 
 	func region(in rect: CGRect) -> CGImage? {
@@ -325,69 +213,6 @@ final class LiveFrameStreamBroker: @unchecked Sendable {
 		try? RsnapLiveSampler(selfCaptureExceptionWindowIDs: exceptionWindowIDs.sorted())
 	}
 
-	private func emitFirstRgbTelemetryIfNeeded(_ sample: LiveChromeSample) {
-		guard sample.rgbSample != nil else {
-			return
-		}
-		let captureID: UInt64
-		let totalMilliseconds: Double
-		stateLock.lock()
-		guard didEmitFirstRgbSample == false, activeTelemetryCaptureID != 0 else {
-			stateLock.unlock()
-			return
-		}
-		didEmitFirstRgbSample = true
-		captureID = activeTelemetryCaptureID
-		totalMilliseconds =
-			telemetryStartedAtUptime.map {
-				NativeHostTelemetry.milliseconds(since: $0)
-			} ?? 0
-		stateLock.unlock()
-		NativeHostTelemetry.liveStreamFirstRgbSample(
-			captureID: captureID,
-			totalMilliseconds: totalMilliseconds,
-			hasPatch: sample.loupePatch != nil
-		)
-	}
-
-	private func emitDiagnosticSampleIfNeeded(
-		captureID: UInt64,
-		startedAt: TimeInterval,
-		outcome: String,
-		frameAgeMilliseconds: Double,
-		hasPatch: Bool
-	) {
-		guard captureID != 0 else {
-			return
-		}
-		stateLock.lock()
-		let shouldEmit: Bool
-		switch outcome {
-		case "empty", "inactive":
-			shouldEmit = !didEmitEmptyDiagnosticSample
-			didEmitEmptyDiagnosticSample = true
-		case "rgb":
-			shouldEmit = !didEmitRgbDiagnosticSample
-			didEmitRgbDiagnosticSample = true
-		default:
-			shouldEmit = issueDiagnosticSamplesRemaining > 0
-			if shouldEmit {
-				issueDiagnosticSamplesRemaining -= 1
-			}
-		}
-		stateLock.unlock()
-		guard shouldEmit else {
-			return
-		}
-		NativeHostTelemetry.liveStreamSample(
-			captureID: captureID,
-			totalMilliseconds: NativeHostTelemetry.milliseconds(since: startedAt),
-			outcome: outcome,
-			frameAgeMilliseconds: frameAgeMilliseconds,
-			hasPatch: hasPatch
-		)
-	}
-
 	private func prime(monitor: SamplerMonitor) {
 		stateLock.lock()
 		let sampler = self.sampler
@@ -452,25 +277,4 @@ final class LiveFrameStreamBroker: @unchecked Sendable {
 		)
 	}
 
-	private static func appKitPointToQuartz(_ point: CGPoint, mainDisplayHeight: CGFloat) -> CGPoint
-	{
-		CGPoint(x: point.x, y: mainDisplayHeight - point.y - 1)
-	}
-
-	private func cgImage(from sample: LiveSampleSnapshot?) -> CGImage? {
-		guard
-			let sample,
-			let patchRGBA = sample.patchRGBA,
-			sample.patchWidth > 0,
-			sample.patchHeight > 0
-		else {
-			return nil
-		}
-
-		return NativeHostImageBridge.cgImage(
-			width: sample.patchWidth,
-			height: sample.patchHeight,
-			rgba: patchRGBA
-		)
-	}
 }

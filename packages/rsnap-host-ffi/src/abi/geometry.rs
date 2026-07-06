@@ -1,26 +1,5 @@
 use std::ptr;
 
-/// FFI-safe owned RGBA image region copied out of the cached live sampler frame.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct RsnapRgbaRegion {
-	/// Region width in pixels.
-	pub width: u32,
-	/// Region height in pixels.
-	pub height: u32,
-	/// Byte count in `rgba`.
-	pub len: usize,
-	/// Caller-provided buffer capacity in bytes.
-	pub capacity: usize,
-	/// Caller-provided RGBA byte buffer in row-major order.
-	pub rgba: *mut u8,
-}
-impl Default for RsnapRgbaRegion {
-	fn default() -> Self {
-		Self { width: 0, height: 0, len: 0, capacity: 0, rgba: ptr::null_mut() }
-	}
-}
-
 /// FFI-safe owned RGBA image region whose buffer is retained by Rust until explicitly freed.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
