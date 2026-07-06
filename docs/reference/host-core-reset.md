@@ -50,14 +50,15 @@ The checked-in repository does not yet fully match the target design.
 Today:
 
 - `apps/rsnap/` is now the thin launcher/bootstrap layer for the staged native host bundle
-- `packages/rsnap-overlay/` is now a narrowed transition crate for retained frozen edit/export,
-  text rendering, and macOS live-sampling adapters; the legacy Rust overlay UI/runtime, replay
-  harness, trace recorder, shaders, backend worker tree, and scroll-capture stitching engine are no
-  longer part of this crate
+- `packages/rsnap-overlay/` is now a narrowed transition crate for retained frozen edit state and
+  macOS live-sampling adapters; the legacy Rust overlay UI/runtime, replay harness, trace
+  recorder, shaders, backend worker tree, scroll-capture stitching engine, and frozen-overlay
+  export compositor are no longer part of this crate
 - `packages/rsnap-capture-core/` is now the checked-in landing zone for portable geometry,
-  semantic scene models, host/core protocol types, export/crop/PNG encoding, capture-frame
-  planning/rendering, wallpaper thumbnail decode/cache, minimap planning, scroll stitching, mosaic
-  generation, frozen-selection transforms, auto-centering, and live-sample pixel helpers
+  semantic scene models, host/core protocol types, export/crop/PNG encoding, frozen-overlay export
+  composition, capture-frame planning/rendering, wallpaper thumbnail decode/cache, minimap
+  planning, scroll stitching, mosaic generation, frozen-selection transforms, auto-centering, and
+  live-sample pixel helpers
 - `packages/rsnap-host-ffi/` is now the checked-in thin C ABI bridge for the native macOS host and
   ships the checked-in header at `packages/rsnap-host-ffi/include/rsnap_host_ffi.h`
 - `native/macos-host/` is now the visible app shell and owns clipboard, save, and deferred OCR

@@ -13,18 +13,16 @@ use rsnap_capture_core::{
 	ScrollMinimapInput, ToolbarItemKind,
 };
 use rsnap_capture_core::{
-	ScrollCaptureBenchScenario, ScrollCaptureOverlapMetrics, ScrollCaptureSessionMetrics,
+	FrozenOverlayExportArrow, FrozenOverlayExportElement, FrozenOverlayExportMosaic,
+	FrozenOverlayExportPen, FrozenOverlayExportPoint, FrozenOverlayExportSpotlight,
+	FrozenOverlayExportSpotlightStyle, FrozenOverlayExportStrokeStyle, FrozenOverlayExportText,
+	FrozenOverlayExportTextStyle, ScrollCaptureBenchScenario, ScrollCaptureOverlapMetrics,
+	ScrollCaptureSessionMetrics,
 };
 use rsnap_overlay::frozen_edit::{
 	FrozenOverlayEditColor, FrozenOverlayEditPoint, FrozenOverlayEditRect,
 	FrozenOverlayEditSession, FrozenOverlayEditSpotlightStyle, FrozenOverlayEditStrokeStyle,
 	FrozenOverlayEditStyle, FrozenOverlayEditTextStyle,
-};
-use rsnap_overlay::frozen_export::{
-	FrozenOverlayExportArrow, FrozenOverlayExportElement, FrozenOverlayExportMosaic,
-	FrozenOverlayExportPen, FrozenOverlayExportPoint, FrozenOverlayExportSpotlight,
-	FrozenOverlayExportSpotlightStyle, FrozenOverlayExportStrokeStyle, FrozenOverlayExportText,
-	FrozenOverlayExportTextStyle,
 };
 
 pub(crate) fn build_export_fixture(width: u32, height: u32) -> RgbaImage {

@@ -5,7 +5,6 @@
 //! overlay runtime is no longer part of the public or compiled crate surface.
 
 pub mod frozen_edit;
-pub mod frozen_export;
 #[cfg(target_os = "macos")]
 pub mod host_live_sampling_macos;
 
@@ -13,10 +12,7 @@ pub mod host_live_sampling_macos;
 mod live_frame_stream_macos;
 #[cfg(target_os = "macos")]
 mod macos_color;
-mod point;
 mod state;
-mod system_fonts;
-mod text_rendering;
 
 /// Returns the `rsnap-overlay` crate version.
 pub fn overlay_version() -> &'static str {
