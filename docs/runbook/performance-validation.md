@@ -36,9 +36,9 @@ target-app acceptance run for broader release claims.
 Use the smallest command that matches the regression surface:
 
 - Scroll-capture correctness or stitching-behavior regressions before final live validation:
-  `cargo test -p rsnap-overlay scroll_capture --lib`
+  `cargo test -p rsnap-capture-core scroll_capture --lib`
 - Scroll-capture or image-processing hot-path regressions:
-  `cargo bench -p rsnap-overlay --bench scroll_capture -- --sample-size 10 --warm-up-time 0.1 --measurement-time 0.1`
+  `cargo bench -p rsnap-capture-core --bench scroll_capture -- --sample-size 10 --warm-up-time 0.1 --measurement-time 0.1`
 - Native-host live chrome regressions:
   `scripts/smoke/native-hud-follow-macos.sh`
 - Native-host click/drag selection, border leakage, mask stability, visual/material, or
@@ -82,7 +82,7 @@ wheel input, and end-to-end scroll-capture behavior.
 For the current downward scroll-capture path, the expected verification sequence is:
 
 1. `cargo make checks`
-2. `cargo test -p rsnap-overlay scroll_capture --lib`
+2. `cargo test -p rsnap-capture-core scroll_capture --lib`
 3. `scripts/perf/local.sh` when the change can affect scroll-capture or image-processing hot paths
 4. `scripts/smoke/native-scroll-capture-macos.sh` with the default `SCROLL_DRIVER=wheel`; use
    `SCROLL_DRIVER=notification` only when directly diagnosing background movement independent of
@@ -99,8 +99,8 @@ checks. When you need a named before/after comparison, use the direct benchmark 
 Criterion can save or load a baseline:
 
 ```bash
-cargo bench -p rsnap-overlay --bench scroll_capture -- --save-baseline local-scroll-capture
-cargo bench -p rsnap-overlay --bench scroll_capture -- --baseline local-scroll-capture
+cargo bench -p rsnap-capture-core --bench scroll_capture -- --save-baseline local-scroll-capture
+cargo bench -p rsnap-capture-core --bench scroll_capture -- --baseline local-scroll-capture
 ```
 
 Keep baseline comparisons on the same machine class and checkout whenever possible. Criterion keeps
@@ -145,7 +145,7 @@ Dedicated macOS smoke:
 - direct benchmark regressions from the scroll-capture target:
   compare scenario-level numbers against your saved baseline and inspect the relevant benchmark
   group before escalating to GUI smoke.
-- `cargo test -p rsnap-overlay scroll_capture --lib` failures:
+- `cargo test -p rsnap-capture-core scroll_capture --lib` failures:
   treat them as deterministic regressions in retained stitching, overlap proof, or fail-closed
   scroll-session semantics before attempting more desktop-session repro.
 - `scripts/perf/self-check-macos.sh` failures:

@@ -1,8 +1,8 @@
 use rsnap_capture_core::CaptureSessionCore;
+use rsnap_capture_core::ScrollStitchSession;
 use rsnap_overlay::frozen_edit::FrozenOverlayEditSession;
 #[cfg(target_os = "macos")]
 use rsnap_overlay::host_live_sampling_macos::HostMacLiveSampler;
-use rsnap_overlay::scroll_stitching::ScrollStitchSession;
 
 /// Opaque session handle owned by the native host through the C ABI.
 pub struct RsnapSessionHandle {

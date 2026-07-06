@@ -16,8 +16,9 @@ Read this when: You are deciding whether a smoke/perf asset is redundant, choosi
 validation case belongs, or auditing whether a script, benchmark, native smoke, or session test is
 the owner for a behavior.
 
-Sources: `scripts/smoke/`; `scripts/perf/`; `packages/rsnap-overlay/src/scroll_capture/tests.rs`;
-`packages/rsnap-overlay/benches/scroll_capture.rs`; `apps/rsnap-perf/`
+Sources: `scripts/smoke/`; `scripts/perf/`;
+`packages/rsnap-capture-core/src/scroll_capture/tests.rs`;
+`packages/rsnap-capture-core/benches/scroll_capture.rs`; `apps/rsnap-perf/`
 
 Depends on: `docs/runbook/performance-validation.md`; `docs/spec/performance.md`
 
@@ -51,8 +52,8 @@ release-scope readiness claim for broader target apps.
 | `scripts/perf/local.sh` | Script entrypoint | deterministic perf sweep | Runs `rsnap-perf` against fixed export and scroll-capture fixtures. |
 | `scripts/perf/self-check-macos.sh` | Script entrypoint | perf aggregation | Runs local deterministic benches plus macOS smoke readiness. |
 | `scripts/perf/macos.sh` | Script entrypoint | perf aggregation | Runs local deterministic benches, the HUD-follow perf smoke, and the core native visual contract. |
-| `packages/rsnap-overlay/benches/scroll_capture.rs` | Deterministic bench | hot-path perf | Stable fingerprint, overlap-match, and one-step session commit baselines. |
-| `packages/rsnap-overlay/src/scroll_capture/tests.rs` | Scroll-capture session semantics | scroll session | Downward stitching, overlap resolution, and worker-pairwise session semantics. |
+| `packages/rsnap-capture-core/benches/scroll_capture.rs` | Deterministic bench | hot-path perf | Stable fingerprint, overlap-match, and one-step session commit baselines. |
+| `packages/rsnap-capture-core/src/scroll_capture/tests.rs` | Scroll-capture session semantics | scroll session | Downward stitching, overlap resolution, and worker-pairwise session semantics. |
 | `apps/rsnap-perf/` | Deterministic bench | perf sweep | Fixed-fixture export, capture-frame, frozen-edit, and scroll-capture timing with checksum-backed correctness checks. |
 
 ## Cleanup rules

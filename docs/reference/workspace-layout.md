@@ -42,8 +42,8 @@ For the active target architecture and migration direction, read:
 | `native/macos-host/` | SwiftPM AppKit-first macOS host shell: menu bar entry, full-screen capture windows, in-window HUD/toolbar, and native bridging into `rsnap-host-ffi` |
 | `apps/rsnap/` | Thin launcher/bootstrap crate: startup logging, build metadata, stable-bundle resolution, and `cargo run -p rsnap` handoff into the staged native macOS host |
 | `apps/rsnap-perf/` | Deterministic local performance sweep: fixed fixture construction, checksum-backed correctness checks, case timing, and budget assertions |
-| `packages/rsnap-overlay/` | Narrow Rust transition crate: retained scroll-capture stitching, frozen edit/export logic, text rendering, deterministic benches, and macOS live-sampling adapters that have not yet moved into `rsnap-capture-core` |
-| `packages/rsnap-capture-core/` | Durable Rust product-semantics and image-algorithm crate: shared geometry, semantic scene model, host/core protocol enums, reset-native session core, export/crop/PNG encoding, capture-frame rendering, wallpaper thumbnail, minimap, mosaic, selection transform, auto-center, and live-sample helpers |
+| `packages/rsnap-overlay/` | Narrow Rust transition crate: retained frozen edit/export logic, text rendering, and macOS live-sampling adapters that have not yet moved into durable owners |
+| `packages/rsnap-capture-core/` | Durable Rust product-semantics and image-algorithm crate: shared geometry, semantic scene model, host/core protocol enums, reset-native session core, export/crop/PNG encoding, capture-frame rendering, wallpaper thumbnail, minimap, mosaic, selection transform, auto-center, scroll stitching, and live-sample helpers |
 | `packages/rsnap-host-ffi/` | Thin C ABI bridge crate used by the native macOS host to call the Rust product core and retained Rust transition modules |
 | `docs/` | Agent-facing repository docs split into `spec`, `runbook`, `reference`, and `decisions` |
 | `assets/` | Shared app-icon source plus generated bundle/runtime assets |
@@ -100,7 +100,6 @@ has native-host callers or deterministic validation surfaces but has not yet mov
 
 Today it owns:
 
-- retained scroll-capture stitching/session logic and scroll-capture benchmarks
 - frozen edit/export logic that is still Rust-owned but has not yet moved into `rsnap-capture-core`
 - text annotation measurement/rendering helpers reused by Rust export paths
 - macOS live-frame and live-sampling adapters used through `rsnap-host-ffi`
@@ -117,7 +116,7 @@ Important:
 Key paths:
 
 - `packages/rsnap-overlay/src/lib.rs`: explicit public surface for the remaining transition
-  helpers: benchmark support, frozen edit/export, scroll stitching, and macOS live sampling
+  helpers: frozen edit/export and macOS live sampling
 - `packages/rsnap-overlay/src/frozen_edit.rs`: Rust-owned frozen overlay edit session state
   machine, including edit geometry, text hit bounds, and movement clamping policy; element models
   live under `frozen_edit/elements.rs`
@@ -130,21 +129,6 @@ Key paths:
   for Rust text rendering
 - `packages/rsnap-overlay/src/point.rs`: crate-local pixel point type used by export/text
   geometry that no longer depends on a UI toolkit point type
-- `packages/rsnap-overlay/src/scroll_capture.rs`: current scroll-capture session entry with
-  focused support modules under `scroll_capture/`
-- `packages/rsnap-overlay/src/scroll_capture/worker_pairwise.rs`: ordered worker-pairwise frame
-  registration, committed-frontier catchup, rewind/reacquire handling, and growth-block decisions
-- `packages/rsnap-overlay/src/scroll_capture/types.rs`: scroll-capture data model, observation
-  outcomes, registration candidates, and telemetry structs shared by the session modules
-- `packages/rsnap-overlay/src/scroll_capture/fingerprint.rs`: sampled frame fingerprinting used by
-  session duplicate detection and structural change tests
-- `packages/rsnap-overlay/src/scroll_capture/support.rs`: shared pixel matching,
-  static-region rejection, image stacking/resizing, and image-analysis helpers used by scroll
-  capture
-- `packages/rsnap-overlay/src/scroll_capture/downward_resolution.rs`: downward viewport candidate
-  scoring and resolution helpers for session-owned stitching decisions
-- `packages/rsnap-overlay/benches/scroll_capture.rs`: deterministic hot-path benchmark target for
-  scroll stitching, fingerprinting, overlap matching, and one-step session commit
 - `packages/rsnap-overlay/src/host_live_sampling_macos.rs`: macOS live sampler adapter exposed
   through `rsnap-host-ffi`
 - `packages/rsnap-overlay/src/live_frame_stream_macos.rs`: macOS ScreenCaptureKit live-frame stream
@@ -169,6 +153,7 @@ It owns:
 - capture-frame layout, background planning, shadowing, wallpaper thumbnail decode/cache, and final
   RGBA composition
 - scroll minimap planning
+- scroll-capture stitching/session logic, deterministic tests, and the Criterion benchmark target
 - mosaic patch generation
 - frozen selection hit-testing and transform geometry
 - auto-center content-bound detection and margin-balance rules
@@ -179,6 +164,24 @@ This crate must stay free of:
 - `winit` or `egui` runtime authority
 - AppKit ownership
 - host-side permission or capture capability code
+
+Key scroll-capture paths:
+
+- `packages/rsnap-capture-core/src/scroll_capture.rs`: scroll-capture session entry with focused
+  support modules under `scroll_capture/`
+- `packages/rsnap-capture-core/src/scroll_stitching.rs`: public native-host stitching wrapper used
+  by `rsnap-host-ffi`
+- `packages/rsnap-capture-core/src/scroll_capture/worker_pairwise.rs`: ordered worker-pairwise
+  frame registration, committed-frontier catchup, rewind/reacquire handling, and growth-block
+  decisions
+- `packages/rsnap-capture-core/src/scroll_capture/types.rs`: scroll-capture data model,
+  observation outcomes, registration candidates, and telemetry structs shared by the session
+  modules
+- `packages/rsnap-capture-core/src/scroll_capture/support.rs`: shared pixel matching,
+  static-region rejection, image stacking/resizing, and image-analysis helpers used by scroll
+  capture
+- `packages/rsnap-capture-core/benches/scroll_capture.rs`: deterministic hot-path benchmark target
+  for scroll stitching, fingerprinting, overlap matching, and one-step session commit
 
 ### `packages/rsnap-host-ffi/`
 
