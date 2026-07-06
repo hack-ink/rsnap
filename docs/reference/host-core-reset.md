@@ -50,10 +50,6 @@ The checked-in repository does not yet fully match the target design.
 Today:
 
 - `apps/rsnap/` is now the thin launcher/bootstrap layer for the staged native host bundle
-- `packages/rsnap-overlay/` is now a narrowed transition crate for macOS live-sampling adapters;
-  the legacy Rust overlay UI/runtime, replay harness, trace recorder, shaders, backend worker
-  tree, scroll-capture stitching engine, frozen-overlay edit state, and frozen-overlay export
-  compositor are no longer part of this crate
 - `packages/rsnap-capture-core/` is now the checked-in landing zone for portable geometry,
   semantic scene models, host/core protocol types, export/crop/PNG encoding, frozen-overlay edit
   state and export composition, capture-frame planning/rendering, wallpaper thumbnail
@@ -216,11 +212,10 @@ The current native-host Swift split is:
   frame-sampling bridge surfaces, `ScrollCaptureFFI.swift` owns scroll minimap planning,
   scroll-capture observation models, session-handle lifecycle, and stitched preview/export image
   adaptation, `ExportEncoderFFI.swift` owns PNG encoding, frozen display crop, mosaic privacy patch,
-  and frozen overlay export-image adaptation, `LiveSamplerFFI.swift` owns sampler-handle
-  lifecycle and ordered live RGBA region frame adaptation, `CaptureFrameFFI.swift` owns
-  capture-frame planning/rendering and wallpaper thumbnail bridge models, `FrozenOverlayFFI.swift`
-  owns frozen overlay edit/export bridge models, and `HostFFISupport.swift` owns shared status,
-  geometry, and owned-buffer adaptation helpers.
+  and frozen overlay export-image adaptation, `CaptureFrameFFI.swift` owns capture-frame
+  planning/rendering and wallpaper thumbnail bridge models, `FrozenOverlayFFI.swift` owns frozen
+  overlay edit/export bridge models, and `HostFFISupport.swift` owns shared status, geometry, and
+  owned-buffer adaptation helpers.
 - `NativeHostSettingsView.swift`, `NativeHostSettingsNavigation.swift`, and
   `NativeHostSettingsSurface.swift`: SwiftUI settings view model, shell layout, navigation, and
   reusable settings surfaces.
@@ -270,8 +265,8 @@ Current reset posture for the boundary slice:
   reusable cross-platform core work, while Swift stays limited to OS acquisition, presentation, and
   host-side effects
 - targeted reset-slice validation now lives at `cargo make test-host-reset`
-- `apps/rsnap/` and `rsnap-overlay/` should treat those crates as the migration target instead of
-  inventing parallel durable protocol types inside legacy containers
+- `apps/rsnap/` should remain a launcher/bootstrap layer instead of inventing parallel durable
+  protocol types outside the core/FFI/native-host boundary
 
 If further optimization is needed, prefer this order:
 

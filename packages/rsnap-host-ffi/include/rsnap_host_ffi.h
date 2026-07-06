@@ -8,12 +8,11 @@
 extern "C" {
 #endif
 
-#define RSNAP_HOST_FFI_ABI_VERSION 38u
+#define RSNAP_HOST_FFI_ABI_VERSION 39u
 #define RSNAP_TOOLBAR_ITEM_CAPACITY 16u
 #define RSNAP_STATUS_MESSAGE_CAPACITY 256u
 
 typedef struct RsnapSessionHandle RsnapSessionHandle;
-typedef struct RsnapLiveSamplerHandle RsnapLiveSamplerHandle;
 typedef struct RsnapScrollSessionHandle RsnapScrollSessionHandle;
 typedef struct RsnapFrozenOverlayEditSessionHandle RsnapFrozenOverlayEditSessionHandle;
 
@@ -406,22 +405,9 @@ RsnapScrollSessionHandle *rsnap_scroll_session_create(
 	uint32_t preview_width_px
 );
 RsnapFrozenOverlayEditSessionHandle *rsnap_frozen_overlay_edit_session_create(void);
-RsnapLiveSamplerHandle *rsnap_live_sampler_create(void);
-RsnapLiveSamplerHandle *rsnap_live_sampler_create_with_self_capture_exception_window_ids(
-	const uint32_t *window_ids,
-	size_t window_id_count
-);
-enum RsnapStatus rsnap_live_sampler_prime_monitor(
-	RsnapLiveSamplerHandle *handle,
-	struct RsnapMonitorRect monitor
-);
-enum RsnapStatus rsnap_live_sampler_reset(
-	RsnapLiveSamplerHandle *handle
-);
 void rsnap_session_destroy(RsnapSessionHandle *handle);
 void rsnap_scroll_session_destroy(RsnapScrollSessionHandle *handle);
 void rsnap_frozen_overlay_edit_session_destroy(RsnapFrozenOverlayEditSessionHandle *handle);
-void rsnap_live_sampler_destroy(RsnapLiveSamplerHandle *handle);
 enum RsnapStatus rsnap_frozen_overlay_edit_session_reset(
 	RsnapFrozenOverlayEditSessionHandle *handle
 );
@@ -692,26 +678,6 @@ enum RsnapStatus rsnap_session_copy_scene_model(
 enum RsnapStatus rsnap_session_take_next_request(
 	RsnapSessionHandle *handle,
 	struct RsnapHostRequestValue *out_request
-);
-enum RsnapStatus rsnap_live_sampler_take_next_region_rgba_after_seq(
-	RsnapLiveSamplerHandle *handle,
-	struct RsnapMonitorRect monitor,
-	struct RsnapRect rect,
-	uint64_t after_frame_seq,
-	uint8_t wait_for_fresh,
-	uint64_t *out_frame_seq,
-	uint64_t *out_frame_age_micros,
-	struct RsnapOwnedRgbaRegion *out_region
-);
-enum RsnapStatus rsnap_live_sampler_take_next_region_rgba_pixels_after_seq(
-	RsnapLiveSamplerHandle *handle,
-	struct RsnapMonitorRect monitor,
-	struct RsnapPixelRect rect,
-	uint64_t after_frame_seq,
-	uint8_t wait_for_fresh,
-	uint64_t *out_frame_seq,
-	uint64_t *out_frame_age_micros,
-	struct RsnapOwnedRgbaRegion *out_region
 );
 void rsnap_owned_rgba_region_release(struct RsnapOwnedRgbaRegion *region);
 void rsnap_owned_bytes_release(struct RsnapOwnedBytes *bytes);

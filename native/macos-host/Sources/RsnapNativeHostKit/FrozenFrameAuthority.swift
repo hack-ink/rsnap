@@ -39,6 +39,9 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 	static let maximumLiveRgbAgeMilliseconds =
 		LiveRgbSample.maximumDisplayAge * 1_000
 	static let maximumLiveRegionAgeMilliseconds = maximumSnapshotAgeMilliseconds
+	static let maximumOrderedRegionAgeMicroseconds: UInt64 = 90_000
+	static let orderedRegionAheadWaitTimeout: TimeInterval = 0.024
+	static let orderedRegionFrameHistoryCapacity = 32
 	static let selfCaptureFilterRetryInterval: TimeInterval = 0.035
 	static let selfCaptureFilterRetryWindow: TimeInterval = 2.5
 
@@ -102,6 +105,8 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 	var displayTargets: [CGDirectDisplayID: FrozenFrameDisplayTarget] = [:]
 	var streams: [CGDirectDisplayID: DisplayStream] = [:]
 	var latestFrames: [CGDirectDisplayID: FrameRecord] = [:]
+	var orderedFrameHistory: [CGDirectDisplayID: [FrameRecord]] = [:]
+	var orderedFrameSequence: UInt64 = 0
 	var firstFrameStartUptimes: [CGDirectDisplayID: TimeInterval] = [:]
 	var firstFrameLoggedDisplayIDs: Set<CGDirectDisplayID> = []
 	var telemetryContext = TelemetryContext(
@@ -112,10 +117,12 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		generation requestGeneration: UInt64
 	) {
 		var firstFrameTelemetry: TelemetryContext?
+		var storedFrameForTelemetry: FrameRecord?
 		stateLock.lock()
 		if generation == requestGeneration, activeDisplayIDs.contains(frame.displayID),
 			isSelfCaptureSafeLocked(frame)
 		{
+			let storedFrame = nextOrderedFrameLocked(from: frame)
 			if firstFrameLoggedDisplayIDs.contains(frame.displayID) == false {
 				firstFrameLoggedDisplayIDs.insert(frame.displayID)
 				let startedAt =
@@ -126,22 +133,24 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 					startedAtUptime: startedAt
 				)
 			}
-			latestFrames[frame.displayID] = frame
+			latestFrames[storedFrame.displayID] = storedFrame
+			appendOrderedFrameLocked(storedFrame)
+			storedFrameForTelemetry = storedFrame
 			stateLock.broadcast()
 		}
 		stateLock.unlock()
-		if let firstFrameTelemetry {
+		if let firstFrameTelemetry, let storedFrameForTelemetry {
 			NativeHostTelemetry.frozenAuthorityFirstFrameTiming(
 				captureID: firstFrameTelemetry.captureID,
 				source: firstFrameTelemetry.source,
-				displayID: frame.displayID,
+				displayID: storedFrameForTelemetry.displayID,
 				totalMilliseconds: NativeHostTelemetry.milliseconds(
 					since: firstFrameTelemetry.startedAtUptime),
-				frameAgeMilliseconds: frame.ageMilliseconds(),
-				sequence: frame.sequence,
-				generation: frame.generation,
+				frameAgeMilliseconds: storedFrameForTelemetry.ageMilliseconds(),
+				sequence: storedFrameForTelemetry.sequence,
+				generation: storedFrameForTelemetry.generation,
 				selfCaptureSafe: true,
-				selfCaptureFilterComplete: frame.selfCaptureFilterComplete
+				selfCaptureFilterComplete: storedFrameForTelemetry.selfCaptureFilterComplete
 			)
 		}
 	}
@@ -154,10 +163,33 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		if generation == stoppedGeneration {
 			streams.removeValue(forKey: displayID)
 			latestFrames.removeValue(forKey: displayID)
+			orderedFrameHistory.removeValue(forKey: displayID)
 			firstFrameLoggedDisplayIDs.remove(displayID)
 			stateLock.broadcast()
 		}
 		stateLock.unlock()
+	}
+
+	private func nextOrderedFrameLocked(from frame: FrameRecord) -> FrameRecord {
+		orderedFrameSequence &+= 1
+		return FrameRecord(
+			displayID: frame.displayID,
+			displayFrame: frame.displayFrame,
+			pixelBuffer: frame.pixelBuffer,
+			generation: frame.generation,
+			sequence: orderedFrameSequence,
+			capturedAtUptime: frame.capturedAtUptime,
+			selfCaptureFilterComplete: frame.selfCaptureFilterComplete
+		)
+	}
+
+	private func appendOrderedFrameLocked(_ frame: FrameRecord) {
+		var frames = orderedFrameHistory[frame.displayID] ?? []
+		frames.append(frame)
+		if frames.count > Self.orderedRegionFrameHistoryCapacity {
+			frames.removeFirst(frames.count - Self.orderedRegionFrameHistoryCapacity)
+		}
+		orderedFrameHistory[frame.displayID] = frames
 	}
 
 	func finishSetup(generation requestGeneration: UInt64) {

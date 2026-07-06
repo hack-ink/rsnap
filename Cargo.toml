@@ -42,7 +42,6 @@ ttf-parser               = { version = "0.25" }
 
 rsnap-capture-core = { version = "0.2.10", path = "packages/rsnap-capture-core" }
 rsnap-host-ffi     = { version = "0.2.10", path = "packages/rsnap-host-ffi" }
-rsnap-overlay      = { version = "0.2.10", path = "packages/rsnap-overlay" }
 
 [profile.final-release]
 inherits = "release"
