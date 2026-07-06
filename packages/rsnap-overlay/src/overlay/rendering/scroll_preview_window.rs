@@ -6,6 +6,8 @@ use wgpu::RenderPassColorAttachment;
 use wgpu::RenderPassDescriptor;
 use wgpu::SurfaceConfiguration;
 
+#[cfg(target_os = "macos")]
+use crate::overlay::macos_window_bridge;
 use crate::overlay::rendering::{GpuContext, ScrollPreviewView, WindowRenderer};
 use crate::overlay::runtime_model::SurfaceFrameSkipReason;
 use crate::overlay::scroll_preview_geometry::{
@@ -91,7 +93,7 @@ impl ScrollPreviewWindow {
 		let _ = window.set_cursor_hittest(false);
 
 		#[cfg(target_os = "macos")]
-		super::macos_configure_hud_window(window.as_ref(), false, 0.0, Some(18.0));
+		macos_window_bridge::macos_configure_hud_window(window.as_ref(), false, 0.0, Some(18.0));
 
 		Ok(Self {
 			window,
