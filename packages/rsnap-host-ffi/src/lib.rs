@@ -24,12 +24,11 @@ pub use self::abi::{
 	RsnapFrozenOverlayEditStyle, RsnapFrozenOverlayExportElement,
 	RsnapFrozenOverlayExportElementKind, RsnapFrozenSelectionTransformKind, RsnapHostEffectKind,
 	RsnapHostEvent, RsnapHostEventKind, RsnapHostReport, RsnapHostReportKind, RsnapHostRequestKind,
-	RsnapHostRequestValue, RsnapLiveSample, RsnapMonitorRect, RsnapOwnedBytes,
-	RsnapOwnedRgbaRegion, RsnapPermissionKind, RsnapPixelRect, RsnapPlatformTag, RsnapPoint,
-	RsnapRect, RsnapRgb, RsnapRgbaRegion, RsnapSceneKind, RsnapSceneModel, RsnapScrollMinimapPlan,
-	RsnapScrollObserveOutcomeKind, RsnapScrollObserveResult, RsnapScrollSessionHandle,
-	RsnapSessionConfig, RsnapSessionHandle, RsnapStatus, RsnapToolbarItem, RsnapToolbarItemKind,
-	RsnapWindowRect,
+	RsnapHostRequestValue, RsnapMonitorRect, RsnapOwnedBytes, RsnapOwnedRgbaRegion,
+	RsnapPermissionKind, RsnapPixelRect, RsnapPlatformTag, RsnapPoint, RsnapRect, RsnapRgb,
+	RsnapSceneKind, RsnapSceneModel, RsnapScrollMinimapPlan, RsnapScrollObserveOutcomeKind,
+	RsnapScrollObserveResult, RsnapScrollSessionHandle, RsnapSessionConfig, RsnapSessionHandle,
+	RsnapStatus, RsnapToolbarItem, RsnapToolbarItemKind, RsnapWindowRect,
 };
 pub use self::capture_frame::{
 	rsnap_bgra_frame_loupe_patch_rgba, rsnap_bgra_frame_sample_rgb,
@@ -55,10 +54,7 @@ pub use self::frozen_overlay_export::rsnap_frozen_overlay_export_render_rgba;
 #[cfg(target_os = "macos")]
 pub use self::live_sampler::{
 	rsnap_live_sampler_create, rsnap_live_sampler_create_with_self_capture_exception_window_ids,
-	rsnap_live_sampler_destroy, rsnap_live_sampler_peek_latest_monitor_rgba,
-	rsnap_live_sampler_peek_region_rgba, rsnap_live_sampler_prime_monitor,
-	rsnap_live_sampler_reset, rsnap_live_sampler_sample_cursor,
-	rsnap_live_sampler_take_latest_monitor_rgba,
+	rsnap_live_sampler_destroy, rsnap_live_sampler_prime_monitor, rsnap_live_sampler_reset,
 	rsnap_live_sampler_take_next_region_rgba_after_seq,
 	rsnap_live_sampler_take_next_region_rgba_pixels_after_seq, rsnap_live_sampler_take_region_rgba,
 };

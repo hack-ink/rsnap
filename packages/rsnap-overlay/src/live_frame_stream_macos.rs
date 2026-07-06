@@ -13,7 +13,7 @@ mod stream_output;
 mod stream_setup;
 mod stream_worker;
 
-pub(crate) use self::stream_facade::{CursorSampleRequest, MacLiveFrameStream};
+pub(crate) use self::stream_facade::MacLiveFrameStream;
 
 use std::time::Duration;
 
