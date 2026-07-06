@@ -1,10 +1,9 @@
-use crate::frozen_export::{
-	FrozenOverlayExportArrow, FrozenOverlayExportElement, FrozenOverlayExportMosaic,
-	FrozenOverlayExportPen, FrozenOverlayExportPoint, FrozenOverlayExportSpotlight,
-	FrozenOverlayExportSpotlightStyle, FrozenOverlayExportStrokeStyle, FrozenOverlayExportText,
-	FrozenOverlayExportTextStyle,
+use rsnap_capture_core::{
+	DisplayPointRect, FrozenOverlayExportArrow, FrozenOverlayExportElement,
+	FrozenOverlayExportMosaic, FrozenOverlayExportPen, FrozenOverlayExportPoint,
+	FrozenOverlayExportSpotlight, FrozenOverlayExportSpotlightStyle,
+	FrozenOverlayExportStrokeStyle, FrozenOverlayExportText, FrozenOverlayExportTextStyle,
 };
-use rsnap_capture_core::DisplayPointRect;
 
 /// Frozen annotation color selected by the host UI.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

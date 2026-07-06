@@ -316,7 +316,7 @@ fn blend_pixel_channels(pixel: &mut [u8], color: Rgba<u8>, src_a: f32) {
 mod tests {
 	use image::{Rgba, RgbaImage};
 
-	use crate::frozen_export::stroke_raster;
+	use crate::frozen_overlay_export::stroke_raster;
 	use crate::point::PixelPoint;
 
 	#[test]

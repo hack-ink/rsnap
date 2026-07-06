@@ -18,9 +18,8 @@ use image::{
 	imageops::{self, FilterType},
 };
 
-use crate::point::PixelPoint;
 use crate::text_rendering::{self, RasterTextAnnotation};
-use rsnap_capture_core::{self, DisplayPointRect};
+use crate::{DisplayPointRect, point::PixelPoint};
 
 const SPOTLIGHT_VISIBLE_NUMERATOR: u16 = 173;
 const STROKE_EXPORT_ALPHA: f32 = 0.96;
@@ -208,11 +207,9 @@ fn apply_mosaic(image: &mut RgbaImage, transform: ExportTransform, rect: Display
 	let Some(source_rect) = transform.source_image_rect(rect) else {
 		return;
 	};
-	let Some(patch) = rsnap_capture_core::frozen_mosaic_light_privacy_patch(
-		image.width(),
-		image.height(),
-		source_rect,
-	) else {
+	let Some(patch) =
+		crate::frozen_mosaic_light_privacy_patch(image.width(), image.height(), source_rect)
+	else {
 		return;
 	};
 	let patch = if patch.width() == destination.width && patch.height() == destination.height {
@@ -506,13 +503,15 @@ fn f64_pair_to_pixel_point(x: f64, y: f64) -> Option<PixelPoint> {
 mod tests {
 	use image::{Rgba, RgbaImage};
 
-	use crate::frozen_export::{
-		self, FrozenOverlayExportArrow, FrozenOverlayExportElement, FrozenOverlayExportMosaic,
-		FrozenOverlayExportPen, FrozenOverlayExportPoint, FrozenOverlayExportSpotlight,
-		FrozenOverlayExportSpotlightStyle, FrozenOverlayExportStrokeStyle, FrozenOverlayExportText,
-		FrozenOverlayExportTextStyle,
+	use crate::{
+		DisplayPointRect,
+		frozen_overlay_export::{
+			FrozenOverlayExportArrow, FrozenOverlayExportElement, FrozenOverlayExportMosaic,
+			FrozenOverlayExportPen, FrozenOverlayExportPoint, FrozenOverlayExportSpotlight,
+			FrozenOverlayExportSpotlightStyle, FrozenOverlayExportStrokeStyle,
+			FrozenOverlayExportText, FrozenOverlayExportTextStyle,
+		},
 	};
-	use rsnap_capture_core::DisplayPointRect;
 
 	#[test]
 	fn export_compositor_applies_mosaic_spotlight_and_stroke() {
@@ -539,7 +538,7 @@ mod tests {
 				},
 			}),
 		];
-		let rendered = frozen_export::render_frozen_overlay_export_rgba(
+		let rendered = super::render_frozen_overlay_export_rgba(
 			image.width(),
 			image.height(),
 			image.as_raw(),
@@ -571,7 +570,7 @@ mod tests {
 				rgba: [255, 107, 107, 255],
 			},
 		});
-		let bottom_rendered = frozen_export::render_frozen_overlay_export_rgba(
+		let bottom_rendered = super::render_frozen_overlay_export_rgba(
 			image.width(),
 			image.height(),
 			image.as_raw(),
@@ -579,7 +578,7 @@ mod tests {
 			&[bottom_point],
 		)
 		.expect("valid bottom-point export");
-		let top_rendered = frozen_export::render_frozen_overlay_export_rgba(
+		let top_rendered = super::render_frozen_overlay_export_rgba(
 			image.width(),
 			image.height(),
 			image.as_raw(),
@@ -609,7 +608,7 @@ mod tests {
 				rgba: [255, 107, 107, 255],
 			},
 		})];
-		let rendered = frozen_export::render_frozen_overlay_export_rgba(
+		let rendered = super::render_frozen_overlay_export_rgba(
 			image.width(),
 			image.height(),
 			image.as_raw(),
@@ -642,7 +641,7 @@ mod tests {
 				},
 			}),
 		];
-		let rendered = frozen_export::render_frozen_overlay_export_rgba(
+		let rendered = super::render_frozen_overlay_export_rgba(
 			image.width(),
 			image.height(),
 			image.as_raw(),

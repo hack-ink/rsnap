@@ -15,10 +15,14 @@ path = "src/lib.rs"
 [dependencies]
 color-eyre        = { workspace = true }
 fast_image_resize = { workspace = true }
+font8x8           = { workspace = true }
+fontdb            = { workspace = true }
+fontdue           = { workspace = true }
 image             = { workspace = true }
 png               = { workspace = true }
 serde             = { workspace = true }
 tracing           = { workspace = true }
+ttf-parser        = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }

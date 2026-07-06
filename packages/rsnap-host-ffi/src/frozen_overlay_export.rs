@@ -9,11 +9,11 @@ use crate::{
 	RsnapFloatPoint, RsnapFloatRect, RsnapFrozenAnnotationColor, RsnapFrozenOverlayExportElement,
 	RsnapFrozenOverlayExportElementKind, RsnapOwnedRgbaRegion, RsnapStatus,
 };
-use rsnap_overlay::frozen_export::{
-	self, FrozenOverlayExportArrow, FrozenOverlayExportElement, FrozenOverlayExportMosaic,
+use rsnap_capture_core::{
+	FrozenOverlayExportArrow, FrozenOverlayExportElement, FrozenOverlayExportMosaic,
 	FrozenOverlayExportPen, FrozenOverlayExportPoint, FrozenOverlayExportSpotlight,
 	FrozenOverlayExportSpotlightStyle, FrozenOverlayExportStrokeStyle, FrozenOverlayExportText,
-	FrozenOverlayExportTextStyle,
+	FrozenOverlayExportTextStyle, frozen_overlay_export,
 };
 
 /// Composites frozen-overlay annotations into a full RGBA export image through Rust.
@@ -47,7 +47,7 @@ pub unsafe extern "C" fn rsnap_frozen_overlay_export_render_rgba(
 	else {
 		return RsnapStatus::InvalidInput;
 	};
-	let Ok(image) = frozen_export::render_frozen_overlay_export_rgba(
+	let Ok(image) = frozen_overlay_export::render_frozen_overlay_export_rgba(
 		width,
 		height,
 		bytes,

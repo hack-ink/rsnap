@@ -53,13 +53,13 @@ Prototype / in active development.
   - `native/macos-host/` is the SwiftPM AppKit host shell and the default local Run path.
   - `apps/rsnap/` is now a thin launcher/bootstrap crate that stages or opens the native host
     bundle and records startup logging.
-  - `packages/rsnap-overlay/` is now a narrowed Rust transition crate for retained frozen
-    edit/export, text rendering, and macOS live-sampling adapters that have not yet moved into
-    `rsnap-capture-core` / the native host.
+  - `packages/rsnap-overlay/` is now a narrowed Rust transition crate for retained frozen edit
+    state and macOS live-sampling adapters that have not yet moved into `rsnap-capture-core` / the
+    native host.
 - The active reset target is no longer a pure-Rust UI stack. New boundary crates now live in:
   - `packages/rsnap-capture-core/` for platform-neutral session semantics and host/core protocol
-    models, plus Rust-owned export, capture-frame rendering, wallpaper thumbnail, minimap, scroll
-    stitching, selection-transform, and image-analysis algorithms
+    models, plus Rust-owned export, frozen-overlay export, capture-frame rendering, wallpaper
+    thumbnail, minimap, scroll stitching, selection-transform, and image-analysis algorithms
   - `packages/rsnap-host-ffi/` for the thin C ABI that the native macOS host calls
     through `packages/rsnap-host-ffi/include/rsnap_host_ffi.h`
 - Current version support remains **macOS only**. Windows and Linux stay out of scope for this

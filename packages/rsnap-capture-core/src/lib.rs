@@ -8,6 +8,7 @@ pub mod auto_center;
 pub mod bgra_frame;
 pub mod capture_frame;
 pub mod export;
+pub mod frozen_overlay_export;
 pub mod geometry;
 pub mod minimap;
 pub mod mosaic;
@@ -17,7 +18,10 @@ pub mod selection_transform;
 pub mod session;
 pub mod wallpaper;
 
+mod point;
 mod scroll_capture;
+mod system_fonts;
+mod text_rendering;
 
 pub use self::{
 	auto_center::{
@@ -36,6 +40,12 @@ pub use self::{
 	export::{
 		RgbaExportImage, crop_export_image, crop_rgba_image, encode_png_lossless_fast,
 		encode_png_lossless_fast_with_screen_scale,
+	},
+	frozen_overlay_export::{
+		FrozenOverlayExportArrow, FrozenOverlayExportElement, FrozenOverlayExportMosaic,
+		FrozenOverlayExportPen, FrozenOverlayExportPoint, FrozenOverlayExportSpotlight,
+		FrozenOverlayExportSpotlightStyle, FrozenOverlayExportStrokeStyle, FrozenOverlayExportText,
+		FrozenOverlayExportTextStyle, render_frozen_overlay_export_rgba,
 	},
 	geometry::{
 		GlobalPoint, GlobalRect, MonitorRect, MonitorRectPoints, RectPoints, Rgb, WindowHit,
@@ -59,6 +69,7 @@ pub use self::{
 		frozen_selection_transform_hit_test, frozen_selection_transform_rect,
 	},
 	session::CaptureSessionCore,
+	text_rendering::{FrozenOverlayTextBounds, measure_frozen_overlay_text_bounds},
 	wallpaper::{
 		capture_frame_wallpaper_png_thumbnail, capture_frame_wallpaper_png_thumbnail_cached,
 	},

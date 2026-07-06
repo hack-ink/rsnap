@@ -16,13 +16,8 @@ path = "src/lib.rs"
 cargo-clippy = []
 
 [dependencies]
-color-eyre         = { workspace = true }
-font8x8            = { workspace = true }
-fontdb             = { workspace = true }
-fontdue            = { workspace = true }
 image              = { workspace = true }
 rsnap-capture-core = { workspace = true }
-ttf-parser         = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block2                   = { workspace = true }
