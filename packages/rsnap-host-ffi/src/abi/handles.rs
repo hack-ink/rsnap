@@ -1,6 +1,4 @@
-use rsnap_capture_core::CaptureSessionCore;
-use rsnap_capture_core::ScrollStitchSession;
-use rsnap_overlay::frozen_edit::FrozenOverlayEditSession;
+use rsnap_capture_core::{CaptureSessionCore, FrozenOverlayEditSession, ScrollStitchSession};
 #[cfg(target_os = "macos")]
 use rsnap_overlay::host_live_sampling_macos::HostMacLiveSampler;
 
