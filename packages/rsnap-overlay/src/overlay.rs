@@ -10,6 +10,7 @@ mod cursor_runtime;
 mod exit_runtime;
 mod frozen_arrow_runtime;
 mod frozen_auto_center_runtime;
+mod frozen_brush_model;
 mod frozen_brush_runtime;
 mod frozen_capture_backend_adapter;
 mod frozen_capture_handoff_runtime;
