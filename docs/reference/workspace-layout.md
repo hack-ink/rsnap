@@ -144,6 +144,9 @@ Key paths:
 - `packages/rsnap-overlay/src/overlay/input_runtime.rs`: overlay focus, modifier, and mouse-button
   input routing; cursor sampling, window-to-global coordinate mapping, cursor-move tracing/timing,
   and live cursor sample requests live under `overlay/input_runtime/cursor_movement.rs`
+- `packages/rsnap-overlay/src/overlay/toolbar_runtime.rs`: toolbar window draw/redraw and lifecycle
+  routing; toolbar cursor translation, pointer movement, drag start, and suspicious motion logging
+  live under `overlay/toolbar_runtime/pointer_motion.rs`
 - `packages/rsnap-overlay/src/worker.rs`: overlay worker thread and backend request handlers;
   worker message protocol and pending-request coalescing live under `worker/`
 - `packages/rsnap-overlay/src/live_frame_stream_macos.rs`: current macOS live-stream support
