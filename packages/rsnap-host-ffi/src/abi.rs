@@ -22,8 +22,6 @@ pub use self::geometry::{
 	RsnapFloatPoint, RsnapFloatRect, RsnapMonitorRect, RsnapOwnedBytes, RsnapOwnedRgbaRegion,
 	RsnapPixelRect, RsnapPoint, RsnapRect, RsnapRgb, RsnapWindowRect,
 };
-#[cfg(target_os = "macos")]
-pub use self::handles::RsnapLiveSamplerHandle;
 pub use self::handles::{
 	RsnapFrozenOverlayEditSessionHandle, RsnapScrollSessionHandle, RsnapSessionHandle,
 };
@@ -39,7 +37,7 @@ pub use self::session::{
 pub use self::status::RsnapStatus;
 
 /// ABI version exported by the thin C host bridge.
-pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 38;
+pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 39;
 
 /// Maximum frozen toolbar items copied into one scene snapshot.
 pub(crate) const RSNAP_TOOLBAR_ITEM_CAPACITY: usize = 16;

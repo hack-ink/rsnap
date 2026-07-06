@@ -273,7 +273,7 @@ Passing one environment class does not automatically satisfy the other.
 
 ## Current runtime signals and their meaning
 
-The native host and retained Rust transition helpers expose several useful diagnostic signals:
+The native host and Rust product core expose several useful diagnostic signals:
 
 - Native-host `live_chrome.pointer_event_gap` reports incoming pointer-event cadence while live
   capture is active.
@@ -340,7 +340,7 @@ The Rsnap performance-tracking project should maintain all of the following:
 - one normative spec for cadence, scenarios, metrics, and known gaps
 - one or more direct benchmark surfaces for render-heavy components
 - deterministic non-GUI benchmark coverage for scroll-capture hot paths
-- structured runtime timing for native-host redraw localization and retained Rust transition helpers
+- structured runtime timing for native-host redraw localization and Rust product-core work
 - coarse GUI smoke gates for gross regression detection
 
 No single artifact type is sufficient on its own.

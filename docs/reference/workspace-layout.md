@@ -42,16 +42,16 @@ For the active target architecture and migration direction, read:
 | `native/macos-host/` | SwiftPM AppKit-first macOS host shell: menu bar entry, full-screen capture windows, in-window HUD/toolbar, and native bridging into `rsnap-host-ffi` |
 | `apps/rsnap/` | Thin launcher/bootstrap crate: startup logging, build metadata, stable-bundle resolution, and `cargo run -p rsnap` handoff into the staged native macOS host |
 | `apps/rsnap-perf/` | Deterministic local performance sweep: fixed fixture construction, checksum-backed correctness checks, case timing, and budget assertions |
-| `packages/rsnap-overlay/` | Narrow Rust transition crate: macOS live-sampling adapters that have not yet moved into the native host |
 | `packages/rsnap-capture-core/` | Durable Rust product-semantics and image-algorithm crate: shared geometry, semantic scene model, host/core protocol enums, reset-native session core, export/crop/PNG encoding, frozen-overlay edit/export, capture-frame rendering, wallpaper thumbnail, minimap, mosaic, selection transform, auto-center, scroll stitching, and live-sample helpers |
-| `packages/rsnap-host-ffi/` | Thin C ABI bridge crate used by the native macOS host to call the Rust product core and retained Rust transition modules |
+| `packages/rsnap-host-ffi/` | Thin C ABI bridge crate used by the native macOS host to call the Rust product core |
 | `docs/` | Agent-facing repository docs split into `spec`, `runbook`, `reference`, and `decisions` |
 | `assets/` | Shared app-icon source plus generated bundle/runtime assets |
 | `scripts/` | Packaging helpers plus structured smoke/perf entrypoints under `scripts/smoke/` and `scripts/perf/` |
 | `.github/` | CI workflows and repository rules |
 
-This top-level split reflects the codebase as checked in today. It remains useful for navigation,
-but it should not be mistaken for the durable host/core target boundary.
+This top-level split reflects the durable native-host/Rust-core boundary: Swift owns macOS capture
+and presentation authority, `rsnap-capture-core` owns portable product semantics and image
+algorithms, and `rsnap-host-ffi` is ABI glue only.
 
 ## Crate ownership map
 
@@ -91,38 +91,6 @@ Key paths:
   case family
 - `apps/rsnap-perf/src/fixtures.rs`: deterministic fixture, checksum, and expected-value support
 - `apps/rsnap-perf/src/measurement.rs`: per-case timing, formatting, and budget enforcement
-
-### `packages/rsnap-overlay/`
-
-Treat `packages/rsnap-overlay/` as a narrowed transition crate for Rust-owned behavior that still
-has native-host callers or deterministic validation surfaces but has not yet moved into
-`rsnap-capture-core`.
-
-Today it owns:
-
-- macOS live-frame region adapters used through `rsnap-host-ffi` for scroll and backdrop
-  continuity while cursor RGB and loupe sampling are native Swift responsibilities
-
-Important:
-
-- The legacy Rust overlay UI/runtime, backend worker, replay harness, trace recorder, shaders, and
-  window/input/rendering tree have been removed from the compiled and tracked source.
-- This crate is still not the long-lived reset target.
-- New work should avoid making `rsnap-overlay` authoritative for OS-facing window, focus, cursor,
-  IME, permission, or capture-capability semantics; those belong on the native-host side of the
-  reset boundary.
-
-Key paths:
-
-- `packages/rsnap-overlay/src/lib.rs`: explicit public surface for the remaining transition
-  helper: macOS ordered live region sampling
-- `packages/rsnap-overlay/src/host_live_sampling_macos.rs`: macOS ordered live region adapter
-  exposed through `rsnap-host-ffi` for scroll/backdrop continuity
-- `packages/rsnap-overlay/src/live_frame_stream_macos.rs`: macOS ScreenCaptureKit live-frame stream
-  support; focused worker, setup, lifecycle, output, filtering, and buffer modules live under
-  `live_frame_stream_macos/`
-- `packages/rsnap-overlay/src/state.rs`: re-exported capture-core geometry used by FFI-facing
-  ordered live region sampling
 
 ### `packages/rsnap-capture-core/`
 
@@ -193,11 +161,9 @@ Treat `packages/rsnap-host-ffi/` as the thin ABI companion to `rsnap-capture-cor
 It owns:
 
 - opaque session handles for foreign hosts
-- FFI-safe config, event, report, scene, request, live-sample, frozen-overlay, capture-frame, and
-  scroll-capture types under the `abi/` module tree
+- FFI-safe config, event, report, scene, request, frozen-overlay, capture-frame, and scroll-capture
+  types under the `abi/` module tree
 - exported `extern "C"` functions that forward into `rsnap-capture-core`
-- exported `extern "C"` functions that bridge retained Rust transition modules while they migrate
-  toward `rsnap-capture-core`
 - the checked-in C header consumed by the native macOS host:
   `packages/rsnap-host-ffi/include/rsnap_host_ffi.h`
 
@@ -225,6 +191,8 @@ It owns:
 - the SwiftPM-built `.app` host shell
 - the AppKit window/view tree used for live and frozen capture UI
 - native cursor, focus, event routing, menu bar entry, and host-side effects
+- native ScreenCaptureKit live/frozen frame authority, including ordered region-frame sampling for
+  scroll and backdrop continuity
 - OS-only resource discovery such as the current wallpaper path
 - conversion between AppKit/CoreGraphics image objects and bridgeable RGBA buffers
 - presentation of Rust-rendered images and models in native windows
@@ -264,19 +232,22 @@ The main host-kit files are split by responsibility:
   passthrough management
 - `CaptureOverlayImageSampler.swift`: CoreGraphics below-overlay capture and display-point sample
   adaptation for live chrome, frozen capture effects, and scroll fallback acquisition
-- `FrozenFrameAuthority.swift`: frozen-frame authority state, frame storage, setup completion, and
-  telemetry bookkeeping
+- `FrozenFrameAuthority.swift`: frozen/live frame authority state, ordered frame storage, setup
+  completion, and telemetry bookkeeping
 - `FrozenFrameAuthority+StreamSetup.swift`: ScreenCaptureKit frozen-frame stream setup,
   shareable-content lookup, self-capture-safe stream gating, and lifecycle reset
-- `FrozenFrameAuthority+SnapshotResolution.swift`: frozen-frame latch-token resolution, RGB/loupe
-  sampling, self-capture-safe frame gating, and fresh-frame authority decisions
+- `FrozenFrameAuthority+SnapshotResolution.swift`: frozen-frame latch-token resolution,
+  RGB/loupe/region sampling, ordered region-frame draining, self-capture-safe frame gating, and
+  fresh-frame authority decisions
 - `FrozenFrameStreamOutput.swift`: ScreenCaptureKit stream-output delegate adaptation,
   usable-frame filtering, display-time conversion, and frame-record emission into the authority
 - `FrozenFrameContentFilterPlanner.swift`: frozen-frame display target planning, shareable-content
   cache freshness, self-capture-excluding content filter construction, and stream configuration
 - `NSScreenDisplayID.swift`: shared AppKit display-ID extraction for native capture surfaces
 - `FrozenFramePixelBufferBridge.swift`: CVPixelBuffer lock/lifetime adaptation for frozen-frame
-  CGImage creation, RGB sampling, and loupe patch extraction
+  CGImage creation, RGB sampling, loupe patch extraction, and RGBA region extraction
+- `LiveFrameStream.swift`: native ordered live region-frame stream broker over
+  `FrozenFrameAuthority` for scroll and backdrop continuity
 - `CaptureHostAnnotationStyleWheelGate.swift`: frozen annotation-size wheel dead-zone and
   per-gesture step throttling
 - `CaptureHostToolbarHoverState.swift`: frozen toolbar hover target state, change detection, and
@@ -384,8 +355,6 @@ The main host-kit files are split by responsibility:
   adaptation
 - `Sources/RsnapHostBridge/ExportEncoderFFI.swift`: Swift bridge PNG encoding, frozen display
   crop, mosaic privacy patch, and frozen overlay export-image adaptation
-- `Sources/RsnapHostBridge/LiveSamplerFFI.swift`: Swift bridge live sampler-handle lifecycle
-  and ordered live RGBA region frame adaptation
 - `Sources/RsnapHostBridge/CaptureFrameFFI.swift`: capture-frame planning/rendering and wallpaper
   thumbnail bridge models over Rust-owned capture-frame algorithms
 - `Sources/RsnapHostBridge/FrozenOverlayFFI.swift`: Swift bridge models and storage for frozen

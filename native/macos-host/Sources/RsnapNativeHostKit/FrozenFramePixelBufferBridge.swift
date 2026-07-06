@@ -190,6 +190,38 @@ enum FrozenFramePixelBufferBridge {
 		return RGBARegionSnapshot(width: pixelRect.width, height: pixelRect.height, rgba: rgba)
 	}
 
+	static func regionSnapshot(
+		from pixelBuffer: CVPixelBuffer,
+		pixelRect rect: CGRect
+	) -> RGBARegionSnapshot? {
+		let frameWidth = CVPixelBufferGetWidth(pixelBuffer)
+		let frameHeight = CVPixelBufferGetHeight(pixelBuffer)
+		let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+		guard frameWidth > 0, frameHeight > 0, bytesPerRow >= frameWidth * 4,
+			rect.width > 0, rect.height > 0
+		else {
+			return nil
+		}
+		let requested = (
+			x: max(0, Int(rect.origin.x.rounded())),
+			y: max(0, Int(rect.origin.y.rounded())),
+			width: max(1, Int(rect.width.rounded())),
+			height: max(1, Int(rect.height.rounded()))
+		)
+		let width = min(requested.width, frameWidth)
+		let height = min(requested.height, frameHeight)
+		let x = min(requested.x, max(frameWidth - width, 0))
+		let y = min(requested.y, max(frameHeight - height, 0))
+		guard width > 0, height > 0 else {
+			return nil
+		}
+		return rgbaSnapshot(
+			from: pixelBuffer,
+			pixelRect: (x: x, y: y, width: width, height: height),
+			bytesPerRow: bytesPerRow
+		)
+	}
+
 	private static func pixelRect(
 		for rect: CGRect,
 		displayFrame: CGRect,
@@ -214,6 +246,46 @@ enum FrozenFramePixelBufferBridge {
 			return nil
 		}
 		return (x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+	}
+
+	private static func rgbaSnapshot(
+		from pixelBuffer: CVPixelBuffer,
+		pixelRect: (x: Int, y: Int, width: Int, height: Int),
+		bytesPerRow: Int
+	) -> RGBARegionSnapshot? {
+		guard CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly) == kCVReturnSuccess else {
+			return nil
+		}
+		defer {
+			CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly)
+		}
+		guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else {
+			return nil
+		}
+
+		let outputBytesPerRow = pixelRect.width * 4
+		var rgba = Data(count: outputBytesPerRow * pixelRect.height)
+		rgba.withUnsafeMutableBytes { outputBuffer in
+			guard let output = outputBuffer.bindMemory(to: UInt8.self).baseAddress else {
+				return
+			}
+			let source = baseAddress.assumingMemoryBound(to: UInt8.self)
+			for row in 0..<pixelRect.height {
+				let sourceRow = source.advanced(
+					by: (pixelRect.y + row) * bytesPerRow + pixelRect.x * 4)
+				let outputRow = output.advanced(by: row * outputBytesPerRow)
+				for column in 0..<pixelRect.width {
+					let sourcePixel = sourceRow.advanced(by: column * 4)
+					let outputPixel = outputRow.advanced(by: column * 4)
+					outputPixel[0] = sourcePixel[2]
+					outputPixel[1] = sourcePixel[1]
+					outputPixel[2] = sourcePixel[0]
+					outputPixel[3] = sourcePixel[3]
+				}
+			}
+		}
+
+		return RGBARegionSnapshot(width: pixelRect.width, height: pixelRect.height, rgba: rgba)
 	}
 
 	private final class PixelBufferImageBacking {

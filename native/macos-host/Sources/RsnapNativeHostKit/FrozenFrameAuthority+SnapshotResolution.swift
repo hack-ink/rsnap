@@ -158,6 +158,58 @@ extension FrozenFrameAuthority {
 		)
 	}
 
+	func nextRegionFrame(
+		in rect: CGRect,
+		afterFrameSequence: UInt64,
+		waitForFresh: Bool
+	) -> RGBARegionFrameSnapshot? {
+		guard
+			let record = nextOrderedRegionRecord(
+				intersecting: rect,
+				afterFrameSequence: afterFrameSequence,
+				waitForFresh: waitForFresh
+			),
+			let region = FrozenFramePixelBufferBridge.regionSnapshot(
+				from: record.pixelBuffer,
+				rect: rect,
+				displayFrame: record.displayFrame
+			)
+		else {
+			return nil
+		}
+		return RGBARegionFrameSnapshot(
+			frameSequence: record.sequence,
+			frameAgeMicroseconds: Self.frameAgeMicroseconds(record),
+			region: region
+		)
+	}
+
+	func nextRegionFrame(
+		in rect: CGRect,
+		pixelRect: CGRect,
+		afterFrameSequence: UInt64,
+		waitForFresh: Bool
+	) -> RGBARegionFrameSnapshot? {
+		guard
+			let record = nextOrderedRegionRecord(
+				intersecting: rect,
+				afterFrameSequence: afterFrameSequence,
+				waitForFresh: waitForFresh
+			),
+			let region = FrozenFramePixelBufferBridge.regionSnapshot(
+				from: record.pixelBuffer,
+				pixelRect: pixelRect
+			)
+		else {
+			return nil
+		}
+		return RGBARegionFrameSnapshot(
+			frameSequence: record.sequence,
+			frameAgeMicroseconds: Self.frameAgeMicroseconds(record),
+			region: region
+		)
+	}
+
 	func snapshot(
 		containing point: CGPoint,
 		after token: FrozenFrameLatchToken?,
@@ -299,5 +351,65 @@ extension FrozenFrameAuthority {
 
 	private static func isFreshForSnapshot(_ record: FrameRecord) -> Bool {
 		record.ageMilliseconds() <= maximumSnapshotAgeMilliseconds
+	}
+
+	private func nextOrderedRegionRecord(
+		intersecting rect: CGRect,
+		afterFrameSequence: UInt64,
+		waitForFresh: Bool
+	) -> FrameRecord? {
+		let deadline =
+			waitForFresh
+			? Date(timeIntervalSinceNow: Self.orderedRegionAheadWaitTimeout)
+			: Date()
+		stateLock.lock()
+		defer {
+			stateLock.unlock()
+		}
+		guard let displayID = displayIDLocked(intersecting: rect) else {
+			return nil
+		}
+		var record = nextOrderedRegionRecordLocked(
+			displayID: displayID,
+			afterFrameSequence: afterFrameSequence
+		)
+		while record == nil, waitForFresh, Date() < deadline {
+			stateLock.wait(until: deadline)
+			record = nextOrderedRegionRecordLocked(
+				displayID: displayID,
+				afterFrameSequence: afterFrameSequence
+			)
+		}
+		return record
+	}
+
+	private func displayIDLocked(intersecting rect: CGRect) -> CGDirectDisplayID? {
+		let center = CGPoint(x: rect.midX, y: rect.midY)
+		return displayTargets.first(where: { $0.value.frame.inclusivelyContains(center) })?.key
+			?? displayTargets.first(where: { $0.value.frame.intersects(rect) })?.key
+	}
+
+	private func nextOrderedRegionRecordLocked(
+		displayID: CGDirectDisplayID,
+		afterFrameSequence: UInt64
+	) -> FrameRecord? {
+		let now = ProcessInfo.processInfo.systemUptime
+		guard let frames = orderedFrameHistory[displayID] else {
+			return nil
+		}
+		return frames.first { frame in
+			frame.sequence > afterFrameSequence
+				&& snapshotEligibleRecordLocked(frame) != nil
+				&& Self.frameAgeMicroseconds(frame, now: now)
+					<= Self.maximumOrderedRegionAgeMicroseconds
+		}
+	}
+
+	private static func frameAgeMicroseconds(
+		_ record: FrameRecord,
+		now: TimeInterval = ProcessInfo.processInfo.systemUptime
+	) -> UInt64 {
+		let microseconds = max(0, now - record.capturedAtUptime) * 1_000_000
+		return UInt64(min(microseconds, Double(UInt64.max)))
 	}
 }
