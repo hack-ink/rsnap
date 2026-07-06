@@ -2,8 +2,6 @@ use std::sync::{Arc, atomic::AtomicU64};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use image::RgbaImage;
-
 use crate::live_frame_stream_macos::frame_store::SharedLatestFrame;
 use crate::live_frame_stream_macos::live_frame_buffer::{
 	self, OrderedRegionFrame, QueuedPixelBufferFrame,
@@ -245,76 +243,6 @@ pub(super) fn ensure_stream(
 	);
 
 	StreamRequestProgress::AwaitingFirstFrame
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn latest_fresh_rgba_region(
-	state: &mut Option<StreamState>,
-	last_setup_attempt_at: &mut Option<Instant>,
-	monitor: MonitorRect,
-	rect_px: RectPoints,
-	filter: &StreamFilterConfig,
-	capture_target: StreamCaptureTarget,
-	frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
-	frame_seq_counter: Arc<AtomicU64>,
-	shared_latest_frame: Arc<SharedLatestFrame>,
-) -> Option<RgbaImage> {
-	let stream_rect_px = stream_worker::stream_rect_for_requested_region(capture_target, rect_px)?;
-	let _ = ensure_stream(
-		state,
-		last_setup_attempt_at,
-		STREAM_SETUP_BACKOFF,
-		false,
-		monitor,
-		filter,
-		capture_target,
-		frame_waker.clone(),
-		frame_seq_counter.clone(),
-		shared_latest_frame.clone(),
-	);
-	let now = Instant::now();
-	let stream_state = state.as_ref()?;
-
-	if let Some(frame) = stream_state.output.latest_frame()
-		&& now.saturating_duration_since(frame.captured_at) <= STREAM_REGION_FRAME_MAX_AGE
-	{
-		return live_frame_buffer::rgba_region_from_pixel_buffer(
-			&frame.pixel_buffer,
-			stream_rect_px,
-		);
-	}
-
-	let _ = refresh_stream(RefreshStreamArgs {
-		state,
-		last_setup_attempt_at,
-		monitor,
-		filter,
-		capture_target,
-		frame_waker,
-		frame_seq_counter,
-		shared_latest_frame,
-	});
-	let min_captured_at = Instant::now();
-	let deadline = min_captured_at + STREAM_REGION_FRAME_REFRESH_TIMEOUT;
-
-	loop {
-		let stream_state = state.as_ref()?;
-
-		if let Some(frame) = stream_state.output.latest_frame()
-			&& frame.captured_at >= min_captured_at
-		{
-			return live_frame_buffer::rgba_region_from_pixel_buffer(
-				&frame.pixel_buffer,
-				stream_rect_px,
-			);
-		}
-
-		if Instant::now() >= deadline {
-			return None;
-		}
-
-		thread::sleep(STREAM_REGION_FRAME_REFRESH_POLL_INTERVAL);
-	}
 }
 
 #[allow(clippy::too_many_arguments)]

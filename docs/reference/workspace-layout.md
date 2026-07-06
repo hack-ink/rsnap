@@ -115,15 +115,14 @@ Important:
 Key paths:
 
 - `packages/rsnap-overlay/src/lib.rs`: explicit public surface for the remaining transition
-  helper: macOS live region sampling
-- `packages/rsnap-overlay/src/host_live_sampling_macos.rs`: macOS live region adapter exposed
-  through `rsnap-host-ffi` for RGBA region continuity
+  helper: macOS ordered live region sampling
+- `packages/rsnap-overlay/src/host_live_sampling_macos.rs`: macOS ordered live region adapter
+  exposed through `rsnap-host-ffi` for scroll/backdrop continuity
 - `packages/rsnap-overlay/src/live_frame_stream_macos.rs`: macOS ScreenCaptureKit live-frame stream
   support; focused worker, setup, lifecycle, output, filtering, and buffer modules live under
   `live_frame_stream_macos/`
-- `packages/rsnap-overlay/src/macos_color.rs`: CoreGraphics color-managed image conversion helpers
-- `packages/rsnap-overlay/src/state.rs`: transition payload types and re-exported capture-core
-  geometry used by FFI-facing live sampling
+- `packages/rsnap-overlay/src/state.rs`: re-exported capture-core geometry used by FFI-facing
+  ordered live region sampling
 
 ### `packages/rsnap-capture-core/`
 
@@ -386,7 +385,7 @@ The main host-kit files are split by responsibility:
 - `Sources/RsnapHostBridge/ExportEncoderFFI.swift`: Swift bridge PNG encoding, frozen display
   crop, mosaic privacy patch, and frozen overlay export-image adaptation
 - `Sources/RsnapHostBridge/LiveSamplerFFI.swift`: Swift bridge live sampler-handle lifecycle
-  and live RGBA region frame adaptation
+  and ordered live RGBA region frame adaptation
 - `Sources/RsnapHostBridge/CaptureFrameFFI.swift`: capture-frame planning/rendering and wallpaper
   thumbnail bridge models over Rust-owned capture-frame algorithms
 - `Sources/RsnapHostBridge/FrozenOverlayFFI.swift`: Swift bridge models and storage for frozen
