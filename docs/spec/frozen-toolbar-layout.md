@@ -1,3 +1,12 @@
+---
+title: "Frozen Toolbar Layout Contract"
+description: "Frozen Toolbar Layout Contract documentation for Rsnap."
+type: "Spec"
+status: active
+authority: normative
+owner: hack-ink/rsnap
+last_verified: 2026-07-06
+---
 # Frozen Toolbar Layout Contract
 
 Purpose: Define the normative placement and expansion invariants for the Frozen-mode toolbar and

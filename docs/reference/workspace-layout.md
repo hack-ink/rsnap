@@ -1,3 +1,12 @@
+---
+title: "Workspace Layout Reference"
+description: "Workspace Layout Reference documentation for Rsnap."
+type: "Reference"
+status: active
+authority: normative
+owner: hack-ink/rsnap
+last_verified: 2026-07-06
+---
 # Workspace Layout Reference
 
 Purpose: Explain the current Rsnap workspace layout, which crate owns which behavior today, and
@@ -33,7 +42,7 @@ For the active target architecture and migration direction, read:
 | `native/macos-host/` | SwiftPM AppKit-first macOS host shell: menu bar entry, full-screen capture windows, in-window HUD/toolbar, and native bridging into `rsnap-host-ffi` |
 | `apps/rsnap/` | Thin launcher/bootstrap crate: startup logging, build metadata, stable-bundle resolution, and `cargo run -p rsnap` handoff into the staged native macOS host |
 | `apps/rsnap-perf/` | Deterministic local performance sweep: fixed fixture construction, checksum-backed correctness checks, case timing, and budget assertions |
-| `packages/rsnap-overlay/` | Transitional Rust runtime and implementation reservoir: legacy overlay runtime, retained scroll-capture logic, frozen edit/export logic, and macOS adapters that have not yet moved into `rsnap-capture-core` |
+| `packages/rsnap-overlay/` | Narrow Rust transition crate: retained scroll-capture stitching, frozen edit/export logic, text rendering, deterministic benches, and macOS live-sampling adapters that have not yet moved into `rsnap-capture-core` |
 | `packages/rsnap-capture-core/` | Durable Rust product-semantics and image-algorithm crate: shared geometry, semantic scene model, host/core protocol enums, reset-native session core, export/crop/PNG encoding, capture-frame rendering, wallpaper thumbnail, minimap, mosaic, selection transform, auto-center, and live-sample helpers |
 | `packages/rsnap-host-ffi/` | Thin C ABI bridge crate used by the native macOS host to call the Rust product core and retained Rust transition modules |
 | `docs/` | Agent-facing repository docs split into `spec`, `runbook`, `reference`, and `decisions` |
@@ -85,77 +94,42 @@ Key paths:
 
 ### `packages/rsnap-overlay/`
 
-Treat `packages/rsnap-overlay/` as the current transitional container for most capture-session and
-legacy overlay behavior.
+Treat `packages/rsnap-overlay/` as a narrowed transition crate for Rust-owned behavior that still
+has native-host callers or deterministic validation surfaces but has not yet moved into
+`rsnap-capture-core`.
 
 Today it owns:
 
-- legacy capture-session lifecycle and overlay runtime paths not yet used by the native-host reset
-- retained scroll-capture session logic, replay support, and benchmarks
+- retained scroll-capture stitching/session logic and scroll-capture benchmarks
 - frozen edit/export logic that is still Rust-owned but has not yet moved into `rsnap-capture-core`
-- text annotation rendering helpers reused by Rust export paths
-- macOS capture and live-frame adapter code that remains quarantined behind explicit host modules
+- text annotation measurement/rendering helpers reused by Rust export paths
+- macOS live-frame and live-sampling adapters used through `rsnap-host-ffi`
 
 Important:
 
-- This is the checked-in ownership shape today.
-- It is not the long-lived reset target.
-- New work should avoid deepening `rsnap-overlay` as the authority for OS-facing window, focus,
-  cursor, IME, or capture-capability semantics when that work belongs on the native-host side of
-  the reset boundary.
+- The legacy Rust overlay UI/runtime, backend worker, replay harness, trace recorder, shaders, and
+  window/input/rendering tree have been removed from the compiled and tracked source.
+- This crate is still not the long-lived reset target.
+- New work should avoid making `rsnap-overlay` authoritative for OS-facing window, focus, cursor,
+  IME, permission, or capture-capability semantics; those belong on the native-host side of the
+  reset boundary.
 
 Key paths:
 
-- `packages/rsnap-overlay/src/lib.rs`: explicit `session` façade plus quarantined
-  `host_macos` / `host_effects_macos` transition modules
-- `packages/rsnap-overlay/src/backend.rs`: capture-backend facade and default factory; backend
-  contract/Stub live under `backend/contract.rs`, and production xcap/native implementation lives
-  under `backend/xcap_capture_backend.rs`
-- `packages/rsnap-overlay/src/overlay.rs`: current overlay root plus its focused
-  runtime/rendering support modules
-- `packages/rsnap-overlay/src/overlay/session_state.rs`: shared transitional overlay session
-  state; frozen annotation/edit model state lives under
-  `overlay/session_state/frozen_annotation.rs`, frozen capture/export lifecycle state lives under
-  `overlay/session_state/frozen_capture.rs`, and scroll-capture session state lives under
-  `overlay/session_state/scroll_capture.rs`
-- `packages/rsnap-overlay/src/frozen_edit.rs`: Rust-owned frozen overlay edit session state machine,
-  including its private edit geometry, text hit bounds, and movement clamping policy
+- `packages/rsnap-overlay/src/lib.rs`: explicit public surface for the remaining transition
+  helpers: benchmark support, frozen edit/export, scroll stitching, and macOS live sampling
+- `packages/rsnap-overlay/src/frozen_edit.rs`: Rust-owned frozen overlay edit session state
+  machine, including edit geometry, text hit bounds, and movement clamping policy; element models
+  live under `frozen_edit/elements.rs`
 - `packages/rsnap-overlay/src/frozen_export.rs`: Rust-owned frozen-overlay export compositor;
   export element schema lives under `frozen_export/model.rs`, and stroke rasterization lives under
   `frozen_export/stroke_raster.rs`
-- `packages/rsnap-overlay/src/overlay/frozen_brush_runtime.rs`: Frozen pen interaction routing
-  for `OverlaySession`; the brush sampling, response, smoothing, preview, and rendered point model
-  lives under `overlay/frozen_brush_model.rs`
-- `packages/rsnap-overlay/src/overlay/rendering.rs`: overlay renderer type and GPU context surface;
-  per-frame egui input/draw orchestration lives under `overlay/rendering/frame_pipeline.rs`,
-  shared selection geometry/cache structs live under `overlay/rendering/selection_geometry.rs`,
-  and renderer phase timing telemetry lives under `overlay/rendering/timing.rs`
-- `packages/rsnap-overlay/src/overlay/rendering/affordances/toolbar.rs`: Frozen toolbar rendering
-  entry; geometry and tool-palette policy live under `overlay/rendering/affordances/toolbar/`
-- `packages/rsnap-overlay/src/overlay/rendering/affordances/frozen_annotations.rs`: Frozen
-  annotation overlay painting and text-edit measurement
-- `packages/rsnap-overlay/src/overlay/macos_native_capture_shell_runtime.rs`: retained macOS
-  native capture-shell host sync; AppKit shell window lifecycle and creation live under
-  `overlay/macos_native_capture_shell_runtime/shell_windows.rs`
-- `packages/rsnap-overlay/src/overlay/worker_runtime.rs`: overlay worker response dispatch and
-  freeze-capture worker lifecycle; live cursor sampling, window-list refresh, and click hit-test
-  ownership lives under `overlay/worker_runtime/live_sampling.rs`
-- `packages/rsnap-overlay/src/overlay/window_runtime.rs`: overlay startup, prewarm, and render
-  window creation; deferred auxiliary window creation policy lives under
-  `overlay/aux_window_runtime.rs`
-- `packages/rsnap-overlay/src/overlay/scroll_runtime.rs`: scroll-capture runtime dispatch for
-  worker responses, external input replay, and frame observation; live-stream polling, backlog
-  consumption, duplicate-frame refresh, and stale-input grace live under
-  `overlay/scroll_runtime/live_stream.rs`
-- `packages/rsnap-overlay/src/overlay/input_runtime.rs`: overlay focus, modifier, and mouse-button
-  input routing; cursor sampling, window-to-global coordinate mapping, cursor-move tracing/timing,
-  and live cursor sample requests live under `overlay/input_runtime/cursor_movement.rs`
-- `packages/rsnap-overlay/src/overlay/toolbar_runtime.rs`: toolbar window draw/redraw and lifecycle
-  routing; toolbar cursor translation, pointer movement, drag start, and suspicious motion logging
-  live under `overlay/toolbar_runtime/pointer_motion.rs`
-- `packages/rsnap-overlay/src/worker.rs`: overlay worker thread and backend request handlers;
-  worker message protocol and pending-request coalescing live under `worker/`
-- `packages/rsnap-overlay/src/live_frame_stream_macos.rs`: current macOS live-stream support
+- `packages/rsnap-overlay/src/text_rendering.rs`: text annotation rasterization for Rust export
+  paths
+- `packages/rsnap-overlay/src/system_fonts.rs`: system font discovery and font payload selection
+  for Rust text rendering
+- `packages/rsnap-overlay/src/point.rs`: crate-local pixel point type used by export/text
+  geometry that no longer depends on a UI toolkit point type
 - `packages/rsnap-overlay/src/scroll_capture.rs`: current scroll-capture session entry with
   focused support modules under `scroll_capture/`
 - `packages/rsnap-overlay/src/scroll_capture/worker_pairwise.rs`: ordered worker-pairwise frame
@@ -169,11 +143,16 @@ Key paths:
   capture
 - `packages/rsnap-overlay/src/scroll_capture/downward_resolution.rs`: downward viewport candidate
   scoring and resolution helpers for session-owned stitching decisions
-- `packages/rsnap-overlay/src/overlay/trace_recording.rs`: scroll-capture live-trace recorder and
-  loader; its serializable manifest and entry schema lives under `overlay/trace_recording/model.rs`
-- `packages/rsnap-overlay/src/overlay/replay_support.rs`: recorded scroll-capture trace replay
-  orchestration; replay result schema, semantic classification, summary finalization, and per-step
-  statistics live under `overlay/replay_support/`
+- `packages/rsnap-overlay/benches/scroll_capture.rs`: deterministic hot-path benchmark target for
+  scroll stitching, fingerprinting, overlap matching, and one-step session commit
+- `packages/rsnap-overlay/src/host_live_sampling_macos.rs`: macOS live sampler adapter exposed
+  through `rsnap-host-ffi`
+- `packages/rsnap-overlay/src/live_frame_stream_macos.rs`: macOS ScreenCaptureKit live-frame stream
+  support; focused worker, setup, lifecycle, output, filtering, and buffer modules live under
+  `live_frame_stream_macos/`
+- `packages/rsnap-overlay/src/macos_color.rs`: CoreGraphics color-managed image conversion helpers
+- `packages/rsnap-overlay/src/state.rs`: transition payload types and re-exported capture-core
+  geometry used by FFI-facing live sampling
 
 ### `packages/rsnap-capture-core/`
 

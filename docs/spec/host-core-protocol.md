@@ -1,3 +1,12 @@
+---
+title: "Host/Core Protocol"
+description: "Host/Core Protocol documentation for Rsnap."
+type: "Spec"
+status: active
+authority: normative
+owner: hack-ink/rsnap
+last_verified: 2026-07-06
+---
 # Host/Core Protocol
 
 Purpose: Define the canonical protocol surfaces that bridge native platform hosts and the Rust

@@ -1,5 +1,6 @@
-use egui::Pos2;
 use image::{Rgba, RgbaImage};
+
+use crate::point::PixelPoint;
 
 #[derive(Clone, Copy, Debug)]
 struct PixelRect {
@@ -11,7 +12,7 @@ struct PixelRect {
 
 pub(super) fn draw_polyline(
 	image: &mut RgbaImage,
-	points: &[Pos2],
+	points: &[PixelPoint],
 	line_width: f32,
 	color: Rgba<u8>,
 ) {
@@ -31,7 +32,7 @@ pub(super) fn draw_polyline(
 
 pub(super) fn draw_segments(
 	image: &mut RgbaImage,
-	segments: &[(Pos2, Pos2)],
+	segments: &[(PixelPoint, PixelPoint)],
 	line_width: f32,
 	color: Rgba<u8>,
 ) {
@@ -66,12 +67,13 @@ fn rasterize_segment(
 	mask_rect: PixelRect,
 	width: u32,
 	height: u32,
-	start: Pos2,
-	end: Pos2,
+	start: PixelPoint,
+	end: PixelPoint,
 	radius: f32,
 ) {
-	let delta = end - start;
-	let delta_len_sq = delta.length_sq();
+	let delta_x = end.x - start.x;
+	let delta_y = end.y - start.y;
+	let delta_len_sq = delta_x.mul_add(delta_x, delta_y * delta_y);
 
 	if delta_len_sq <= f32::EPSILON {
 		rasterize_circle(coverage_mask, mask_rect, width, height, start, radius);
@@ -87,9 +89,12 @@ fn rasterize_segment(
 
 	for y in bounds.y..bounds.y + bounds.height {
 		for x in bounds.x..bounds.x + bounds.width {
-			let sample = Pos2::new(x as f32 + 0.5, y as f32 + 0.5);
-			let projection = ((sample - start).dot(delta) / delta_len_sq).clamp(0.0, 1.0);
-			let nearest = start + delta * projection;
+			let sample = PixelPoint::new(x as f32 + 0.5, y as f32 + 0.5);
+			let projection = (((sample.x - start.x) * delta_x + (sample.y - start.y) * delta_y)
+				/ delta_len_sq)
+				.clamp(0.0, 1.0);
+			let nearest =
+				PixelPoint::new(start.x + delta_x * projection, start.y + delta_y * projection);
 
 			update_coverage_mask(
 				coverage_mask,
@@ -107,7 +112,7 @@ fn rasterize_circle(
 	mask_rect: PixelRect,
 	width: u32,
 	height: u32,
-	center: Pos2,
+	center: PixelPoint,
 	radius: f32,
 ) {
 	let Some(bounds) = circle_pixel_bounds(center, width, height, radius)
@@ -118,7 +123,7 @@ fn rasterize_circle(
 
 	for y in bounds.y..bounds.y + bounds.height {
 		for x in bounds.x..bounds.x + bounds.width {
-			let sample = Pos2::new(x as f32 + 0.5, y as f32 + 0.5);
+			let sample = PixelPoint::new(x as f32 + 0.5, y as f32 + 0.5);
 
 			update_coverage_mask(
 				coverage_mask,
@@ -132,7 +137,7 @@ fn rasterize_circle(
 }
 
 fn segments_pixel_bounds(
-	segments: &[(Pos2, Pos2)],
+	segments: &[(PixelPoint, PixelPoint)],
 	width: u32,
 	height: u32,
 	radius: f32,
@@ -154,8 +159,8 @@ fn segments_pixel_bounds(
 }
 
 fn segment_pixel_bounds(
-	start: Pos2,
-	end: Pos2,
+	start: PixelPoint,
+	end: PixelPoint,
 	width: u32,
 	height: u32,
 	radius: f32,
@@ -170,7 +175,12 @@ fn segment_pixel_bounds(
 	)
 }
 
-fn circle_pixel_bounds(center: Pos2, width: u32, height: u32, radius: f32) -> Option<PixelRect> {
+fn circle_pixel_bounds(
+	center: PixelPoint,
+	width: u32,
+	height: u32,
+	radius: f32,
+) -> Option<PixelRect> {
 	pixel_bounds(
 		center.x - radius - 0.5,
 		center.y - radius - 0.5,
@@ -304,10 +314,10 @@ fn blend_pixel_channels(pixel: &mut [u8], color: Rgba<u8>, src_a: f32) {
 
 #[cfg(test)]
 mod tests {
-	use egui::Pos2;
 	use image::{Rgba, RgbaImage};
 
 	use crate::frozen_export::stroke_raster;
+	use crate::point::PixelPoint;
 
 	#[test]
 	fn draw_polyline_renders_single_point_strokes() {
@@ -315,7 +325,7 @@ mod tests {
 
 		stroke_raster::draw_polyline(
 			&mut image,
-			&[Pos2::new(4.0, 4.0)],
+			&[PixelPoint::new(4.0, 4.0)],
 			2.0,
 			Rgba([255, 0, 0, 255]),
 		);
@@ -329,7 +339,7 @@ mod tests {
 
 		stroke_raster::draw_segments(
 			&mut image,
-			&[(Pos2::new(f32::NAN, 4.0), Pos2::new(4.0, 4.0))],
+			&[(PixelPoint::new(f32::NAN, 4.0), PixelPoint::new(4.0, 4.0))],
 			2.0,
 			Rgba([255, 0, 0, 255]),
 		);
