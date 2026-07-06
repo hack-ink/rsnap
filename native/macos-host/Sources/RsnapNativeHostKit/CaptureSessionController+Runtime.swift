@@ -147,7 +147,6 @@ extension CaptureSessionController {
 				captureID: captureID,
 				detail: "elapsedMs=\(String(format: "%.2f", elapsedMilliseconds))"
 			)
-			self.frozenFrameAuthority.stop()
 			self.liveFrameStream.stop()
 			self.pendingLiveFrameStreamRelease = nil
 			NativeHostTelemetry.captureEvent(

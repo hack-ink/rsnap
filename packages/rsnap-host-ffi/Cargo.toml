@@ -15,4 +15,3 @@ path       = "src/lib.rs"
 
 [dependencies]
 rsnap-capture-core = { workspace = true }
-rsnap-overlay      = { workspace = true }

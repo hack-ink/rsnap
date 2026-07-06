@@ -80,6 +80,7 @@ extension FrozenFrameAuthority {
 			selfCaptureUnsafeAfterUptime = nil
 		}
 		latestFrames = latestFrames.filter { targetIDs.contains($0.key) }
+		orderedFrameHistory = orderedFrameHistory.filter { targetIDs.contains($0.key) }
 		updateTelemetryContextLocked(
 			captureID: captureID,
 			source: source,
@@ -163,6 +164,7 @@ extension FrozenFrameAuthority {
 		let requestGeneration = generation
 		setupDisplayIDs = targetIDs
 		latestFrames = latestFrames.filter { targetIDs.contains($0.key) }
+		orderedFrameHistory = orderedFrameHistory.filter { targetIDs.contains($0.key) }
 		updateTelemetryContextLocked(
 			captureID: captureID,
 			source: source,
@@ -231,6 +233,7 @@ extension FrozenFrameAuthority {
 		selfCaptureUnsafeAfterUptime = nil
 		displayTargets.removeAll()
 		latestFrames.removeAll()
+		orderedFrameHistory.removeAll()
 		firstFrameStartUptimes.removeAll()
 		firstFrameLoggedDisplayIDs.removeAll()
 		telemetryContext = TelemetryContext(

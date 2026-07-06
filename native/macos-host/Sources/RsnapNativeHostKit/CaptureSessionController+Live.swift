@@ -5,11 +5,11 @@ import RsnapHostBridge
 
 extension CaptureSessionController {
 	func prepareLiveFrameStreamSampler(reason: String) {
-		liveFrameStream.prepareSampler(reason: reason)
+		liveFrameStream.prepareAuthority(reason: reason)
 	}
 
 	func prepareLaunchCaptureStreams(reason: String) {
-		liveFrameStream.prepareSampler(reason: reason)
+		liveFrameStream.prepareAuthority(reason: reason)
 		guard NativePermissions.screenRecordingGranted else {
 			return
 		}
@@ -157,9 +157,9 @@ extension CaptureSessionController {
 		let startPoint = NSEvent.mouseLocation
 		let desktopFrame = CaptureOverlayController.desktopFrame
 		frozenFrameLatchToken = nil
-		// The Rust live sampler treats these IDs as current-process windows to
-		// include through the app-level exclusion. Overlay windows must stay out
-		// of this list so color sampling sees the desktop under the capture UI.
+		// The native frame authority treats these IDs as current-process windows to include
+		// through the app-level exclusion. Overlay windows must stay out of this list so color
+		// sampling sees the desktop under the capture UI.
 		cancelPendingScreenCaptureStreamRelease(reason: "start_capture")
 		liveFrameStream.updateSelfCaptureExceptionWindowIDs(
 			capturableOwnWindowIDs,

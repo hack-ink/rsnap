@@ -14,8 +14,8 @@ last_verified: 2026-07-06
 
 - The active Rust dependency graph no longer contains `egui`, `egui-wgpu`, `egui-winit`, or
   `egui-phosphor`.
-- The checked-in `rsnap-overlay` crate no longer exposes or compiles the retired Rust overlay UI
-  runtime, backend worker, trace recorder, or deleted replay harness.
+- The checked-in workspace no longer contains an active `rsnap-overlay` crate, and the retired Rust
+  overlay UI runtime, backend worker, trace recorder, and replay harness remain absent.
 - Active docs and README routes no longer direct agents to deleted replay scripts or deleted
   overlay runtime tests.
 - Retained scroll-capture correctness evidence is represented by Rust session tests, deterministic
@@ -23,10 +23,11 @@ last_verified: 2026-07-06
 
 ## Evidence Anchors
 
-- `Cargo.toml` and `packages/rsnap-overlay/Cargo.toml` remove the `egui*` workspace dependencies
-  and crate dependencies.
-- `packages/rsnap-overlay/src/lib.rs` exposes only macOS live sampling transition helpers; scroll
-  stitching and frozen-overlay edit/export have since moved to `packages/rsnap-capture-core/`.
+- `Cargo.toml` removes the `egui*` workspace dependencies and no longer lists a
+  `rsnap-overlay` workspace dependency.
+- `packages/rsnap-overlay/` has been removed. Scroll stitching, frozen-overlay edit/export, and
+  portable image algorithms live in `packages/rsnap-capture-core/`; macOS live sampling authority
+  lives in `native/macos-host/`.
 - `packages/rsnap-capture-core/src/point.rs`,
   `packages/rsnap-capture-core/src/frozen_overlay_export.rs`,
   `packages/rsnap-capture-core/src/frozen_overlay_export/stroke_raster.rs`, and
@@ -44,10 +45,9 @@ last_verified: 2026-07-06
 ## Reverse Checks
 
 - `rg -n 'name = "egui|egui-|"egui"|"egui-' Cargo.lock Cargo.toml
-  packages/rsnap-overlay/Cargo.toml packages/rsnap-host-ffi/Cargo.toml apps/rsnap-perf/Cargo.toml`
+  packages/rsnap-host-ffi/Cargo.toml apps/rsnap-perf/Cargo.toml`
   returned no matches.
-- `cargo tree -p rsnap-overlay -i egui --depth 4` and
-  `cargo tree -p rsnap-host-ffi -i egui --depth 4` both reported that no `egui` package matches the
+- `cargo tree -p rsnap-host-ffi -i egui --depth 4` reported that no `egui` package matches the
   package ID.
 - `rg -n "replay-scroll-capture|scroll_capture_replay|replay_recorded|replay_support|trace_recording|overlay/tests|worker_tick_runtime|worker_observation_runtime|recorded-trace flow|deterministic replay|recorded replay" README.md docs/index.md docs/reference docs/runbook docs/spec docs/decisions scripts packages apps -S`
   returned no active-route matches after the docs update.
@@ -61,12 +61,12 @@ pass
 ## Required Updates
 
 - None for the retired Rust overlay UI runtime or `egui` dependency surface.
-- Future cleanup should continue migrating the remaining transition helpers from `rsnap-overlay`
-  into `rsnap-capture-core` when their ownership boundary is ready.
+- None for the retired Rust overlay UI runtime, `egui` dependency surface, or former transition
+  crate.
 
 ## Citations
 
 - `docs/reference/workspace-layout.md`
 - `docs/reference/smoke-perf-validation-surface.md`
 - `docs/runbook/performance-validation.md`
-- `packages/rsnap-overlay/src/lib.rs`
+- `native/macos-host/Sources/RsnapNativeHostKit/FrozenFrameAuthority.swift`

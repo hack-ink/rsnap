@@ -57,8 +57,8 @@ final class CaptureSessionController: NSObject {
 	static let liveFrameStreamReleaseGrace: TimeInterval = 3.0
 
 	let settingsStore: NativeHostSettingsStore
-	let liveFrameStream = LiveFrameStreamBroker()
 	let frozenFrameAuthority = FrozenFrameAuthority()
+	lazy var liveFrameStream = LiveFrameStreamBroker(frozenFrameAuthority: frozenFrameAuthority)
 	let frozenCommitQueue = DispatchQueue(
 		label: "ink.hack.rsnap.frozen-commit",
 		qos: .userInitiated

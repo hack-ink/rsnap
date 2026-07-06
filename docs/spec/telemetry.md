@@ -34,8 +34,8 @@ Rsnap has two active telemetry sources.
 Native-host events are the authoritative source for screenshot startup, live sampling,
 Frozen transition, pasteboard write, and native ScreenCaptureKit lifecycle timing.
 
-Rust tracing events are the authoritative source for retained Rust transition helpers,
-scroll capture, live frame stream internals, and file-log initialization.
+Rust tracing events are the authoritative source for launcher/bootstrap file-log initialization and
+Rust product-core diagnostics such as scroll-capture stitching.
 
 ## Required Fields
 

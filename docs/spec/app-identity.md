@@ -51,7 +51,7 @@ contract:
 
 - Repository slug and URLs: `hack-ink/rsnap`.
 - Cargo package names, crate names, binary package selectors, and source paths such as
-  `rsnap`, `rsnap-overlay`, `rsnap-capture-core`, `rsnap-host-ffi`, and `apps/rsnap/`.
+  `rsnap`, `rsnap-capture-core`, `rsnap-host-ffi`, and `apps/rsnap/`.
 - Environment variables and build-time constants such as `RSNAP_NATIVE_HOST_STAGE_DIR`.
 - Bundle identifier and preference domain: `ink.hack.rsnap`.
 - Telemetry schemas and log predicates such as `rsnap.native_host.telemetry/1` and

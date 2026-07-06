@@ -8,13 +8,9 @@ mod abi;
 mod capture_frame;
 mod frozen_overlay;
 mod frozen_overlay_export;
-#[cfg(target_os = "macos")]
-mod live_sampler;
 mod scroll_session;
 mod session;
 
-#[cfg(target_os = "macos")]
-pub use self::abi::RsnapLiveSamplerHandle;
 pub use self::abi::{
 	RSNAP_HOST_FFI_ABI_VERSION, RsnapCaptureFrameBackgroundKind, RsnapCaptureFrameBackgroundPlan,
 	RsnapCaptureFrameColorStop, RsnapCaptureFramePlan, RsnapCaptureFrameRenderKind,
@@ -51,13 +47,6 @@ pub use self::frozen_overlay::{
 	rsnap_frozen_overlay_edit_snapshot_release,
 };
 pub use self::frozen_overlay_export::rsnap_frozen_overlay_export_render_rgba;
-#[cfg(target_os = "macos")]
-pub use self::live_sampler::{
-	rsnap_live_sampler_create, rsnap_live_sampler_create_with_self_capture_exception_window_ids,
-	rsnap_live_sampler_destroy, rsnap_live_sampler_prime_monitor, rsnap_live_sampler_reset,
-	rsnap_live_sampler_take_next_region_rgba_after_seq,
-	rsnap_live_sampler_take_next_region_rgba_pixels_after_seq,
-};
 pub use self::scroll_session::{
 	rsnap_scroll_session_create, rsnap_scroll_session_destroy,
 	rsnap_scroll_session_observe_downward_frame,
@@ -74,9 +63,6 @@ pub use self::session::{
 use std::mem;
 use std::ptr;
 use std::slice;
-
-#[cfg(not(target_os = "macos"))]
-use rsnap_overlay as _;
 
 use rsnap_capture_core::{
 	self, AutoCenterImageError, DisplayPointRect, FrozenSelectionTransformInput,
