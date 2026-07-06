@@ -205,6 +205,8 @@ use self::runtime_model::{
 };
 #[cfg(all(target_os = "macos", test))]
 use self::session_state::InflightScrollCaptureObservation;
+#[cfg(all(target_os = "macos", test))]
+use self::session_state::LiveStreamStaleGrace;
 use self::session_state::{
 	ActiveFrozenBrushStroke, CursorMoveTrace, FrozenAnnotationColor, FrozenArrowAnnotation,
 	FrozenArrowDragState, FrozenBrushModelState, FrozenBrushState, FrozenBrushStroke,
@@ -216,8 +218,7 @@ use self::session_state::{
 };
 #[cfg(target_os = "macos")]
 use self::session_state::{
-	LiveStreamStaleGrace, MacOSHudWindowConfigState, MacOSScrollPixelResidual,
-	MacOSScrollWheelEvent,
+	MacOSHudWindowConfigState, MacOSScrollPixelResidual, MacOSScrollWheelEvent,
 };
 #[cfg(target_os = "macos")]
 use self::trace_recording::ScrollCaptureTraceInputRecord;
