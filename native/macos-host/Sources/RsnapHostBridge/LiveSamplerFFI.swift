@@ -85,46 +85,6 @@ public final class RsnapLiveSampler: @unchecked Sendable {
 		}
 	}
 
-	public func peekRegion(
-		monitor: MonitorSnapshot,
-		rect: CGRect
-	) throws -> RGBARegionSnapshot? {
-		stateLock.lock()
-		defer { stateLock.unlock() }
-
-		let encodedMonitor = RsnapMonitorRect(
-			id: monitor.id,
-			origin: RsnapPoint(
-				x: Int32(monitor.frame.origin.x.rounded()),
-				y: Int32(monitor.frame.origin.y.rounded())
-			),
-			width: UInt32(max(monitor.frame.width.rounded(), 0)),
-			height: UInt32(max(monitor.frame.height.rounded(), 0)),
-			scale_factor_x1000: monitor.scaleFactorX1000
-		)
-		let encodedRect = RsnapRect(
-			x: Int32(rect.origin.x.rounded()),
-			y: Int32(rect.origin.y.rounded()),
-			width: UInt32(max(rect.width.rounded(), 0)),
-			height: UInt32(max(rect.height.rounded(), 0))
-		)
-		var ownedRegion = RsnapOwnedRgbaRegion()
-		let takeStatus = rsnap_live_sampler_take_region_rgba(
-			handle,
-			encodedMonitor,
-			encodedRect,
-			&ownedRegion
-		)
-		let takeCode = rsnap_status_code(takeStatus)
-		if takeCode == 3 {
-			return nil
-		}
-		if takeCode != 0 {
-			throw HostBridgeError.ffiStatus(context: "taking live RGBA region", code: takeCode)
-		}
-		return rsnapOwnedRgbaSnapshot(from: ownedRegion)
-	}
-
 	public func nextRegionFrame(
 		monitor: MonitorSnapshot,
 		rect: CGRect,

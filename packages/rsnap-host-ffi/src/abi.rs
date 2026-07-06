@@ -39,7 +39,7 @@ pub use self::session::{
 pub use self::status::RsnapStatus;
 
 /// ABI version exported by the thin C host bridge.
-pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 37;
+pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 38;
 
 /// Maximum frozen toolbar items copied into one scene snapshot.
 pub(crate) const RSNAP_TOOLBAR_ITEM_CAPACITY: usize = 16;

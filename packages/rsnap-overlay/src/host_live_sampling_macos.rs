@@ -39,29 +39,6 @@ impl HostMacLiveSampler {
 	}
 
 	#[must_use]
-	/// Returns a fresh RGBA region from the live monitor stream when possible.
-	///
-	/// This keeps stationary native-host color sampling responsive to animated content
-	/// without falling back to slower window-list captures.
-	pub fn peek_region_rgba(
-		&mut self,
-		monitor: MonitorRect,
-		origin: GlobalPoint,
-		width: u32,
-		height: u32,
-	) -> Option<HostRgbaRegion> {
-		let rect = clipped_region_rect(monitor, origin, width, height)?;
-		let rect_px = monitor.local_rect_to_pixels(rect);
-		let image = self.stream.latest_rgba_region(monitor, rect_px)?;
-
-		Some(HostRgbaRegion {
-			width: image.width(),
-			height: image.height(),
-			rgba: image.into_raw(),
-		})
-	}
-
-	#[must_use]
 	/// Returns the oldest queued RGBA region after `after_frame_seq`.
 	///
 	/// Callers that need scroll-capture continuity should update `after_frame_seq`

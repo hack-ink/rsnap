@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define RSNAP_HOST_FFI_ABI_VERSION 37u
+#define RSNAP_HOST_FFI_ABI_VERSION 38u
 #define RSNAP_TOOLBAR_ITEM_CAPACITY 16u
 #define RSNAP_STATUS_MESSAGE_CAPACITY 256u
 
@@ -692,12 +692,6 @@ enum RsnapStatus rsnap_session_copy_scene_model(
 enum RsnapStatus rsnap_session_take_next_request(
 	RsnapSessionHandle *handle,
 	struct RsnapHostRequestValue *out_request
-);
-enum RsnapStatus rsnap_live_sampler_take_region_rgba(
-	RsnapLiveSamplerHandle *handle,
-	struct RsnapMonitorRect monitor,
-	struct RsnapRect rect,
-	struct RsnapOwnedRgbaRegion *out_region
 );
 enum RsnapStatus rsnap_live_sampler_take_next_region_rgba_after_seq(
 	RsnapLiveSamplerHandle *handle,

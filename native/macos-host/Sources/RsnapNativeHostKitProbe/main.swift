@@ -25,6 +25,7 @@ enum RsnapNativeHostKitProbe {
 		assertCaptureHostFrozenFirstDisplayHandoffState()
 		assertCaptureHostScrollToolbarBackdropState()
 		assertCaptureHostScrollToolbarBackdropWorker()
+		FrozenFramePixelBufferRegionProbe.verifyRegionSnapshotMapping()
 		assertCaptureHostAnnotationStyleWheelGate()
 		assertCaptureHostToolbarHoverState()
 		assertCaptureHostLiveSampleCachePointMatching()
