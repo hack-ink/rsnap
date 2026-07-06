@@ -2,6 +2,8 @@
 
 ## 2026-07-06
 
+- Moved frozen-overlay edit state references from `rsnap-overlay` to `rsnap-capture-core` after the
+  edit session migrated into the durable core crate.
 - Moved frozen-overlay export composition, text rendering, and font fallback references from
   `rsnap-overlay` to `rsnap-capture-core` after the compositor migrated into the durable core
   crate.

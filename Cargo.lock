@@ -1104,7 +1104,6 @@ dependencies = [
  "color-eyre",
  "image",
  "rsnap-capture-core",
- "rsnap-overlay",
 ]
 
 [[package]]

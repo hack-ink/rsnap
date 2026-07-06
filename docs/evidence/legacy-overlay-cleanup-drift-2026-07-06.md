@@ -25,9 +25,8 @@ last_verified: 2026-07-06
 
 - `Cargo.toml` and `packages/rsnap-overlay/Cargo.toml` remove the `egui*` workspace dependencies
   and crate dependencies.
-- `packages/rsnap-overlay/src/lib.rs` exposes only frozen edit and macOS live sampling transition
-  helpers; scroll stitching and frozen-overlay export have since moved to
-  `packages/rsnap-capture-core/`.
+- `packages/rsnap-overlay/src/lib.rs` exposes only macOS live sampling transition helpers; scroll
+  stitching and frozen-overlay edit/export have since moved to `packages/rsnap-capture-core/`.
 - `packages/rsnap-capture-core/src/point.rs`,
   `packages/rsnap-capture-core/src/frozen_overlay_export.rs`,
   `packages/rsnap-capture-core/src/frozen_overlay_export/stroke_raster.rs`, and
