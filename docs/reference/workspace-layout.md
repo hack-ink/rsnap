@@ -100,7 +100,8 @@ has native-host callers or deterministic validation surfaces but has not yet mov
 
 Today it owns:
 
-- macOS live-frame and live-sampling adapters used through `rsnap-host-ffi`
+- macOS live-frame region adapters used through `rsnap-host-ffi` for scroll and backdrop
+  continuity while cursor RGB and loupe sampling are native Swift responsibilities
 
 Important:
 
@@ -114,9 +115,9 @@ Important:
 Key paths:
 
 - `packages/rsnap-overlay/src/lib.rs`: explicit public surface for the remaining transition
-  helper: macOS live sampling
-- `packages/rsnap-overlay/src/host_live_sampling_macos.rs`: macOS live sampler adapter exposed
-  through `rsnap-host-ffi`
+  helper: macOS live region sampling
+- `packages/rsnap-overlay/src/host_live_sampling_macos.rs`: macOS live region adapter exposed
+  through `rsnap-host-ffi` for RGBA region continuity
 - `packages/rsnap-overlay/src/live_frame_stream_macos.rs`: macOS ScreenCaptureKit live-frame stream
   support; focused worker, setup, lifecycle, output, filtering, and buffer modules live under
   `live_frame_stream_macos/`
@@ -211,7 +212,6 @@ Key paths:
   payloads
 - `packages/rsnap-host-ffi/src/abi/session.rs`: session config, host event/report, scene, toolbar,
   and host-request payloads
-- `packages/rsnap-host-ffi/src/abi/live.rs`: live-sampler cursor sample payloads
 - `packages/rsnap-host-ffi/src/abi/frozen_overlay.rs`: frozen overlay edit/export and selection
   transform payloads
 - `packages/rsnap-host-ffi/src/abi/capture_frame.rs`: capture-frame planning/rendering payloads
@@ -385,8 +385,8 @@ The main host-kit files are split by responsibility:
   adaptation
 - `Sources/RsnapHostBridge/ExportEncoderFFI.swift`: Swift bridge PNG encoding, frozen display
   crop, mosaic privacy patch, and frozen overlay export-image adaptation
-- `Sources/RsnapHostBridge/LiveSamplerFFI.swift`: Swift bridge live sampler models,
-  sampler-handle lifecycle, and live RGBA region frame adaptation
+- `Sources/RsnapHostBridge/LiveSamplerFFI.swift`: Swift bridge live sampler-handle lifecycle
+  and live RGBA region frame adaptation
 - `Sources/RsnapHostBridge/CaptureFrameFFI.swift`: capture-frame planning/rendering and wallpaper
   thumbnail bridge models over Rust-owned capture-frame algorithms
 - `Sources/RsnapHostBridge/FrozenOverlayFFI.swift`: Swift bridge models and storage for frozen

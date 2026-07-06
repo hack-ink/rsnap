@@ -114,11 +114,11 @@ Do not encode values into the event name; emit values as fields.
   but the frozen authority still had a fresh same-sequence frame for an unchanged/static desktop.
   `frameAgeMs` must be derived from the source frame's real capture timestamp, not from the time a
   wrapper copied cached pixels. The release handoff must not use cache-only live-sampler
-  latest-monitor snapshots, including `peekLatestMonitorImage` or `take_latest_monitor_rgba`,
-  unless that API is extended to expose freshness-proven frame age and sequence. The release
-  handoff must also not use a synchronous full-monitor `CGWindowList` capture as a first-frame
-  fallback because that path can add visible latency and can differ subtly from the live
-  ScreenCaptureKit frame in window shadow/framing treatment.
+  latest-monitor snapshots; those FFI wrappers were removed because they lacked
+  freshness-proven frame age and sequence. The release handoff must also not use a synchronous
+  full-monitor `CGWindowList` capture as a first-frame fallback because that path can add visible
+  latency and can differ subtly from the live ScreenCaptureKit frame in window shadow/framing
+  treatment.
 - Rust identifiers use snake_case unless they are mirroring existing platform names.
 
 ## Capture Correlation

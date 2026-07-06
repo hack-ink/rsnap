@@ -28,7 +28,6 @@ final class ChromeSampleFeed: @unchecked Sendable {
 	typealias FirstRgbSampled = @Sendable () -> Void
 	typealias SampleUpdated = () -> Void
 
-	private let broker: LiveFrameStreamBroker
 	private let frameRgbSampler: FrameRgbSampler
 	private let framePatchSampler: FramePatchSampler
 	private let backgroundSampler: BackgroundSampler
@@ -93,14 +92,12 @@ final class ChromeSampleFeed: @unchecked Sendable {
 	private var liveStreamRgbReady = false
 
 	init(
-		broker: LiveFrameStreamBroker,
 		frameRgbSampler: @escaping FrameRgbSampler = { _ in nil },
 		framePatchSampler: @escaping FramePatchSampler = { _, _ in nil },
 		backgroundSampler: @escaping BackgroundSampler,
 		firstRgbSampled: @escaping FirstRgbSampled = {},
 		sampleUpdated: @escaping SampleUpdated = {}
 	) {
-		self.broker = broker
 		self.frameRgbSampler = frameRgbSampler
 		self.framePatchSampler = framePatchSampler
 		self.backgroundSampler = backgroundSampler
@@ -309,33 +306,24 @@ final class ChromeSampleFeed: @unchecked Sendable {
 			&& now - lastLoupePatchRefreshUptime < Self.loupePatchSampleMinimumInterval
 		let shouldRefreshLoupePatch =
 			includeLoupePatch && !canReuseRecentPatch
-		let streamSample =
-			shouldRefreshLoupePatch
-			? broker.sample(at: point, sidePixels: sidePixels)
-			: nil
 		let framePatchSample =
-			shouldRefreshLoupePatch && streamSample?.loupePatch == nil
+			shouldRefreshLoupePatch
 			? framePatchSampler(point, sidePixels)
-			: nil
-		let streamRgbSample =
-			frameRgbSample == nil
-			? (streamSample?.rgb ?? broker.rgbSample(at: point))
 			: nil
 		let reusableRgbSample = LiveOverlayChromeSamplePolicy.reusableRgbSample(
 			previousSample: previousSample, previousPoint: previousPoint, point: point, now: now)
 		let rgbSample =
 			frameRgbSample
-			?? streamRgbSample
 			?? reusableRgbSample
 		let rgbSource =
 			LiveOverlayChromeSamplePolicy.rgbSampleSource(
 				frameRgbSample: frameRgbSample,
-				streamRgbSample: streamRgbSample,
+				streamRgbSample: nil,
 				reusableRgbSample: reusableRgbSample
 			)
 		let shouldUseDisplayPointSampler: Bool
 		stateLock.lock()
-		if frameRgbSample != nil || streamRgbSample != nil {
+		if frameRgbSample != nil {
 			liveStreamRgbReady = true
 		}
 		shouldUseDisplayPointSampler = !liveStreamRgbReady
@@ -346,14 +334,13 @@ final class ChromeSampleFeed: @unchecked Sendable {
 				source: source,
 				sidePixels: sidePixels,
 				includeLoupePatch: includeLoupePatch,
-				streamRgbSample: streamRgbSample?.rgb,
+				streamRgbSample: nil,
 				pointIdleDuration: pointIdleDuration
 			)
 		}
 		let patchSample =
 			LiveOverlayChromeSamplePolicy.sampleWithUpdatedPatch(
 				rgb: nil, loupePatch: framePatchSample)
-			?? streamSample
 			?? LiveOverlayChromeSamplePolicy.recentPatchSample(
 				previousSample: previousSample,
 				canReuseRecentPatch: canReuseRecentPatch
@@ -371,7 +358,7 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		stateLock.lock()
 		latestSample = sample
 		latestSamplePoint = sample == nil ? nil : point
-		if framePatchSample != nil || streamSample?.loupePatch != nil {
+		if framePatchSample != nil {
 			self.lastLoupePatchRefreshUptime = now
 		}
 		let firstRgbTelemetry = makeFirstRgbTelemetryLocked(
