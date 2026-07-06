@@ -15,8 +15,6 @@ use crate::backend;
 use crate::overlay::MacLiveFrameStream;
 #[cfg(target_os = "macos")]
 use crate::overlay::MacOSHudWindowConfigState;
-#[cfg(target_os = "macos")]
-use crate::overlay::OverlayMode;
 use crate::overlay::hud_geometry::LOUPE_TILE_CORNER_RADIUS_POINTS;
 use crate::overlay::toolbar_geometry::TOOLBAR_EXPANDED_HEIGHT_PX;
 use crate::overlay::toolbar_layout_model;
@@ -357,143 +355,6 @@ impl OverlaySession {
 		self.prime_startup_live_stream_nonblocking(startup_monitor);
 	}
 
-	#[cfg(target_os = "macos")]
-	/// Completes creation of non-critical auxiliary windows after the first overlay frame.
-	pub fn finish_startup_aux_window_creation(
-		&mut self,
-		event_loop: &ActiveEventLoop,
-	) -> Result<(), String> {
-		if !self.startup_aux_window_creation_pending && !self.aux_window_creation_needed() {
-			return Ok(());
-		}
-
-		self.startup_aux_window_creation_scheduled = false;
-
-		let mut created_aux_windows = false;
-
-		if self.loupe_window.is_none() && self.loupe_window_needed() {
-			self.create_loupe_window(event_loop)?;
-
-			created_aux_windows = true;
-		}
-		if self.toolbar_window.is_none() && self.toolbar_window_needed() {
-			self.create_toolbar_window(event_loop)?;
-
-			created_aux_windows = true;
-		}
-		if self.scroll_preview_window.is_none() && self.scroll_preview_window_needed() {
-			self.create_scroll_preview_window(event_loop)?;
-
-			created_aux_windows = true;
-		}
-
-		self.complete_startup_aux_window_creation(created_aux_windows);
-
-		if created_aux_windows
-			&& let Some(monitor) = self.scroll_capture.monitor
-			&& self.rebuild_active_scroll_capture_live_stream()
-			&& let Some(live_stream) = self.scroll_capture.live_stream.as_ref()
-		{
-			live_stream.prime_monitor_nonblocking(monitor);
-		}
-		if self.loupe_window_needed() {
-			self.set_alt_loupe_window_visible(self.active_cursor_monitor(), true);
-		}
-		if self.toolbar_window_needed() {
-			self.request_redraw_toolbar_window();
-		}
-		if self.scroll_preview_window_needed() {
-			if let Some(monitor) = self.scroll_capture.monitor {
-				self.position_scroll_preview_window(monitor);
-			}
-
-			self.request_redraw_scroll_preview_window();
-		}
-
-		Ok(())
-	}
-
-	#[cfg(target_os = "macos")]
-	fn loupe_window_needed(&self) -> bool {
-		matches!(self.state.mode, OverlayMode::Live)
-			&& self.state.alt_held
-			&& !self.live_loupe_uses_hud_window()
-	}
-
-	#[cfg(target_os = "macos")]
-	fn toolbar_window_needed(&self) -> bool {
-		matches!(self.state.mode, OverlayMode::Frozen)
-			&& self.toolbar_state.visible
-			&& self.frozen_preview_visible()
-	}
-
-	#[cfg(target_os = "macos")]
-	fn scroll_preview_window_needed(&self) -> bool {
-		self.scroll_capture.active
-	}
-
-	#[cfg(target_os = "macos")]
-	fn aux_window_creation_needed(&self) -> bool {
-		(self.loupe_window.is_none() && self.loupe_window_needed())
-			|| (self.toolbar_window.is_none() && self.toolbar_window_needed())
-			|| (self.scroll_preview_window.is_none() && self.scroll_preview_window_needed())
-	}
-
-	#[cfg(target_os = "macos")]
-	pub(super) fn request_aux_window_creation_if_needed(&mut self) {
-		if !self.aux_window_creation_needed() {
-			return;
-		}
-
-		self.startup_aux_window_creation_pending = true;
-
-		self.maybe_schedule_startup_aux_window_creation();
-	}
-
-	#[cfg(target_os = "macos")]
-	pub(super) fn complete_startup_aux_window_creation(&mut self, created_aux_windows: bool) {
-		self.startup_aux_window_creation_pending = false;
-
-		if created_aux_windows {
-			if self.latest_live_cursor_sample_request_id.is_some() {
-				// If startup already primed live sampling, keep the existing stream alive
-				// and defer the narrow ScreenCaptureKit upgrade until an auxiliary window
-				// is actually shown.
-				self.pending_startup_aux_live_stream_filter_upgrade = true;
-			} else {
-				// Delay the first live-stream ensure until after the aux windows exist so
-				// startup can begin with the full self-capture exclusion set.
-				self.kick_startup_live_sampling();
-			}
-		}
-	}
-
-	#[cfg(target_os = "macos")]
-	pub(super) fn maybe_apply_pending_startup_aux_live_stream_filter_upgrade(
-		&mut self,
-		monitor: MonitorRect,
-	) {
-		if !self.pending_startup_aux_live_stream_filter_upgrade {
-			return;
-		}
-
-		let Some(stream) = self.live_sample_stream.as_ref() else {
-			return;
-		};
-
-		if stream.upgrade_monitor_nonblocking(monitor) {
-			self.pending_startup_aux_live_stream_filter_upgrade = false;
-		}
-	}
-
-	#[cfg(not(target_os = "macos"))]
-	pub(super) fn maybe_apply_pending_startup_aux_live_stream_filter_upgrade(
-		&mut self,
-		monitor: MonitorRect,
-	) {
-		let _ = monitor;
-	}
-
 	pub(super) fn reset_for_start(&mut self) {
 		#[cfg(target_os = "macos")]
 		self.set_scroll_overlay_mouse_passthrough(false);
@@ -727,7 +588,10 @@ impl OverlaySession {
 		Ok(())
 	}
 
-	fn create_loupe_window(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
+	pub(super) fn create_loupe_window(
+		&mut self,
+		event_loop: &ActiveEventLoop,
+	) -> Result<(), String> {
 		let desired_inner_size =
 			hud_helpers::stable_live_loupe_window_inner_size_points(self.state.loupe_patch_side_px);
 		let attrs = Window::default_attributes()
@@ -765,7 +629,10 @@ impl OverlaySession {
 		Ok(())
 	}
 
-	fn create_toolbar_window(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
+	pub(super) fn create_toolbar_window(
+		&mut self,
+		event_loop: &ActiveEventLoop,
+	) -> Result<(), String> {
 		let startup_size = toolbar_layout_model::frozen_toolbar_window_startup_size_points();
 		let attrs = Window::default_attributes()
 			.with_title("rsnap-toolbar")
@@ -819,7 +686,10 @@ impl OverlaySession {
 		Ok(())
 	}
 
-	fn create_scroll_preview_window(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
+	pub(super) fn create_scroll_preview_window(
+		&mut self,
+		event_loop: &ActiveEventLoop,
+	) -> Result<(), String> {
 		let gpu = self.gpu.as_ref().ok_or_else(|| String::from("Missing GPU context"))?;
 		let window = ScrollPreviewWindow::new(event_loop, gpu)?;
 
