@@ -123,6 +123,8 @@ Key paths:
   renderer phase timing telemetry lives under `overlay/rendering/timing.rs`
 - `packages/rsnap-overlay/src/overlay/rendering/affordances/toolbar.rs`: Frozen toolbar rendering
   entry; geometry and tool-palette policy live under `overlay/rendering/affordances/toolbar/`
+- `packages/rsnap-overlay/src/overlay/rendering/affordances/frozen_annotations.rs`: Frozen
+  annotation overlay painting and text-edit measurement
 - `packages/rsnap-overlay/src/overlay/macos_native_capture_shell_runtime.rs`: retained macOS
   native capture-shell host sync; AppKit shell window lifecycle and creation live under
   `overlay/macos_native_capture_shell_runtime/shell_windows.rs`
