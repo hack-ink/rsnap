@@ -114,7 +114,8 @@ Key paths:
 - `packages/rsnap-overlay/src/overlay.rs`: current overlay root plus its focused
   runtime/rendering support modules
 - `packages/rsnap-overlay/src/overlay/session_state.rs`: shared transitional overlay session
-  state; frozen capture/export lifecycle state lives under
+  state; frozen annotation/edit model state lives under
+  `overlay/session_state/frozen_annotation.rs`, frozen capture/export lifecycle state lives under
   `overlay/session_state/frozen_capture.rs`, and scroll-capture session state lives under
   `overlay/session_state/scroll_capture.rs`
 - `packages/rsnap-overlay/src/overlay/rendering.rs`: overlay window renderer orchestration; shared
