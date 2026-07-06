@@ -137,6 +137,27 @@ extension FrozenFrameAuthority {
 		)
 	}
 
+	func regionImage(in rect: CGRect) -> CGImage? {
+		stateLock.lock()
+		let center = CGPoint(x: rect.midX, y: rect.midY)
+		let displayID =
+			displayTargets.first(where: { $0.value.frame.inclusivelyContains(center) })?.key
+			?? displayTargets.first(where: { $0.value.frame.intersects(rect) })?.key
+		let record = displayID.flatMap { latestFrames[$0] }.flatMap(snapshotEligibleRecordLocked)
+		stateLock.unlock()
+		guard let record else {
+			return nil
+		}
+		guard record.ageMilliseconds() <= Self.maximumLiveRegionAgeMilliseconds else {
+			return nil
+		}
+		return FrozenFramePixelBufferBridge.regionImage(
+			from: record.pixelBuffer,
+			rect: rect,
+			displayFrame: record.displayFrame
+		)
+	}
+
 	func snapshot(
 		containing point: CGPoint,
 		after token: FrozenFrameLatchToken?,

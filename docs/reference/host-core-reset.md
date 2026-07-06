@@ -216,8 +216,8 @@ The current native-host Swift split is:
   frame-sampling bridge surfaces, `ScrollCaptureFFI.swift` owns scroll minimap planning,
   scroll-capture observation models, session-handle lifecycle, and stitched preview/export image
   adaptation, `ExportEncoderFFI.swift` owns PNG encoding, frozen display crop, mosaic privacy patch,
-  and frozen overlay export-image adaptation, `LiveSamplerFFI.swift` owns live sampler models,
-  sampler-handle lifecycle, and live RGBA region frame adaptation, `CaptureFrameFFI.swift` owns
+  and frozen overlay export-image adaptation, `LiveSamplerFFI.swift` owns sampler-handle
+  lifecycle and ordered live RGBA region frame adaptation, `CaptureFrameFFI.swift` owns
   capture-frame planning/rendering and wallpaper thumbnail bridge models, `FrozenOverlayFFI.swift`
   owns frozen overlay edit/export bridge models, and `HostFFISupport.swift` owns shared status,
   geometry, and owned-buffer adaptation helpers.

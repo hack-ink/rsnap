@@ -94,8 +94,12 @@ Fallback behavior:
 
 - Live HUD RGB and loupe pixels: Swift `FrozenFrameAuthority` samples the latest eligible
   `SCStream` frame through native `ScreenCaptureKit`.
-- Scroll/backdrop region continuity: Rust `rsnap-overlay` keeps the transitional ordered
-  region-frame stream behind `rsnap-host-ffi`.
+- Latest live region/background patch sampling: Swift `FrozenFrameAuthority.regionImage(in:)`
+  samples the latest eligible frame; Rust overlay no longer owns cache-only latest region
+  sampling. This path uses the frozen snapshot age budget, not the longer live RGB display budget,
+  so stale stream frames yield to native fallback capture.
+- Scroll/backdrop continuity: Rust `rsnap-overlay` keeps the transitional ordered region-frame
+  stream behind `rsnap-host-ffi`.
 - Minimum: macOS 12.3+.
 - Cursor/loupe FFI has been removed; the Rust live sampler no longer owns live chrome cursor
   sampling.

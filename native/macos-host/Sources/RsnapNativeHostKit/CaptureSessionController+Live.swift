@@ -227,6 +227,9 @@ extension CaptureSessionController {
 			},
 			framePatchSampler: { [frozenFrameAuthority] point, sidePixels in
 				frozenFrameAuthority.loupePatch(containing: point, sidePixels: sidePixels)
+			},
+			frameRegionSampler: { [frozenFrameAuthority] rect in
+				frozenFrameAuthority.regionImage(in: rect)
 			}
 		)
 		self.overlayController = overlayController

@@ -56,7 +56,7 @@ pub use self::live_sampler::{
 	rsnap_live_sampler_create, rsnap_live_sampler_create_with_self_capture_exception_window_ids,
 	rsnap_live_sampler_destroy, rsnap_live_sampler_prime_monitor, rsnap_live_sampler_reset,
 	rsnap_live_sampler_take_next_region_rgba_after_seq,
-	rsnap_live_sampler_take_next_region_rgba_pixels_after_seq, rsnap_live_sampler_take_region_rgba,
+	rsnap_live_sampler_take_next_region_rgba_pixels_after_seq,
 };
 pub use self::scroll_session::{
 	rsnap_scroll_session_create, rsnap_scroll_session_destroy,

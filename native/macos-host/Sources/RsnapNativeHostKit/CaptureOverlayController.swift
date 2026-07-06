@@ -21,13 +21,15 @@ final class CaptureOverlayController {
 		controller: CaptureSessionController,
 		liveFrameStream: LiveFrameStreamBroker,
 		frameRgbSampler: @escaping ChromeSampleFeed.FrameRgbSampler,
-		framePatchSampler: @escaping ChromeSampleFeed.FramePatchSampler
+		framePatchSampler: @escaping ChromeSampleFeed.FramePatchSampler,
+		frameRegionSampler: @escaping CaptureOverlayLiveChromePipeline.FrameRegionSampler
 	) {
 		self.controller = controller
 		self.liveChromePipeline = CaptureOverlayLiveChromePipeline(
 			liveFrameStream: liveFrameStream,
 			frameRgbSampler: frameRgbSampler,
 			framePatchSampler: framePatchSampler,
+			frameRegionSampler: frameRegionSampler,
 			sampleUpdated: { [weak controller] in
 				(controller?.overlayController?.primaryWindow as? CaptureOverlayWindow)?.hostView
 					.refreshSampleUpdatedLiveChromeNow()

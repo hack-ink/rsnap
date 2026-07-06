@@ -9,8 +9,6 @@ pub mod host_live_sampling_macos;
 
 #[cfg(target_os = "macos")]
 mod live_frame_stream_macos;
-#[cfg(target_os = "macos")]
-mod macos_color;
 mod state;
 
 /// Returns the `rsnap-overlay` crate version.
