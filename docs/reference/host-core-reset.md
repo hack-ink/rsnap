@@ -50,14 +50,14 @@ The checked-in repository does not yet fully match the target design.
 Today:
 
 - `apps/rsnap/` is now the thin launcher/bootstrap layer for the staged native host bundle
-- `packages/rsnap-overlay/` is now a narrowed transition crate for retained scroll-capture
-  stitching, frozen edit/export, text rendering, deterministic benches, and macOS live-sampling
-  adapters; the legacy Rust overlay UI/runtime, replay harness, trace recorder, shaders, and
-  backend worker tree are no longer part of the checked-in source
+- `packages/rsnap-overlay/` is now a narrowed transition crate for retained frozen edit/export,
+  text rendering, and macOS live-sampling adapters; the legacy Rust overlay UI/runtime, replay
+  harness, trace recorder, shaders, backend worker tree, and scroll-capture stitching engine are no
+  longer part of this crate
 - `packages/rsnap-capture-core/` is now the checked-in landing zone for portable geometry,
   semantic scene models, host/core protocol types, export/crop/PNG encoding, capture-frame
-  planning/rendering, wallpaper thumbnail decode/cache, minimap planning, mosaic generation,
-  frozen-selection transforms, auto-centering, and live-sample pixel helpers
+  planning/rendering, wallpaper thumbnail decode/cache, minimap planning, scroll stitching, mosaic
+  generation, frozen-selection transforms, auto-centering, and live-sample pixel helpers
 - `packages/rsnap-host-ffi/` is now the checked-in thin C ABI bridge for the native macOS host and
   ships the checked-in header at `packages/rsnap-host-ffi/include/rsnap_host_ffi.h`
 - `native/macos-host/` is now the visible app shell and owns clipboard, save, and deferred OCR
@@ -255,8 +255,8 @@ Current reset posture for the scroll-capture slice:
 
 - the native app host owns scroll-capture permission checks, external scroll-input observer
   lifecycle, native scroll-input normalization, and screenshot capability acquisition
-- the retained Rust scroll-capture core owns scroll-capture session state, overlap proof, stitching, and
-  fail-closed product semantics
+- `rsnap-capture-core` owns scroll-capture session state, overlap proof, stitching, and fail-closed
+  product semantics
 - capability start/stop, frame delivery, and host-side failures must cross the boundary as explicit
   host/core protocol calls instead of implicit worker ownership inside a Rust UI runtime
 

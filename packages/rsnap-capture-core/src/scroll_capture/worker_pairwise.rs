@@ -10,7 +10,7 @@ const WORKER_PAIRWISE_CORROBORATION_TOLERANCE_ROWS: u32 = 24;
 const WORKER_PAIRWISE_COMMITTED_CATCHUP_MIN_MOTION_ROWS: u32 = 24;
 
 impl ScrollSession {
-	pub(crate) fn observe_worker_pairwise_vision_frame(
+	pub(crate) fn observe_worker_pairwise_frame(
 		&mut self,
 		frame: RgbaImage,
 	) -> color_eyre::eyre::Result<ScrollObserveOutcome> {
@@ -85,10 +85,11 @@ impl ScrollSession {
 			}
 
 			(matched, Some(matched.motion_rows))
-		} else if let Some(matched) = pairwise_shift::classify_vision_downward_sample_motion_against(
-			&previous_worker_frame,
-			&frame,
-		) {
+		} else if let Some(matched) =
+			pairwise_shift::classify_pairwise_downward_sample_motion_against(
+				&previous_worker_frame,
+				&frame,
+			) {
 			(
 				matched,
 				pairwise_shift::trusted_pairwise_downward_shift_rows_near_motion(
@@ -132,7 +133,7 @@ impl ScrollSession {
 		)
 	}
 
-	pub(crate) fn observe_worker_pairwise_vision_frame_with_motion_hint(
+	pub(crate) fn observe_worker_pairwise_frame_with_motion_hint(
 		&mut self,
 		frame: RgbaImage,
 		motion_rows_hint: Option<u32>,
@@ -143,7 +144,7 @@ impl ScrollSession {
 
 		self.record_last_sample_eval_context();
 
-		let result = self.observe_worker_pairwise_vision_frame(frame);
+		let result = self.observe_worker_pairwise_frame(frame);
 
 		self.transient_motion_rows_hint = previous_hint;
 
@@ -182,11 +183,11 @@ impl ScrollSession {
 		&mut self,
 		frame: RgbaImage,
 		fingerprint: Vec<u8>,
-		vision_motion_rows: u32,
+		pairwise_motion_rows: u32,
 		corroborated_shift_rows: Option<u32>,
 	) -> color_eyre::eyre::Result<ScrollObserveOutcome> {
 		let effective_motion_rows = match Self::resolve_worker_pairwise_motion_rows(
-			vision_motion_rows,
+			pairwise_motion_rows,
 			corroborated_shift_rows,
 		) {
 			Ok(motion_rows) => motion_rows,
@@ -194,7 +195,7 @@ impl ScrollSession {
 				return Ok(self.block_worker_pairwise_growth(
 					frame,
 					fingerprint,
-					vision_motion_rows,
+					pairwise_motion_rows,
 					self.current_viewport_top_y,
 					0,
 					block_reason,
@@ -204,7 +205,7 @@ impl ScrollSession {
 
 		tracing::debug!(
 			op = "scroll_capture.worker_pairwise_motion_resolved",
-			vision_motion_rows,
+			pairwise_motion_rows,
 			corroborated_motion_rows = corroborated_shift_rows,
 			effective_motion_rows,
 			current_viewport_top_y = self.current_viewport_top_y,
@@ -249,7 +250,7 @@ impl ScrollSession {
 			}),
 			Some(candidate_viewport_top_y),
 			Some(growth_rows),
-			Some("worker_pairwise_vision"),
+			Some("worker_pairwise"),
 		);
 
 		self.worker_pairwise_previous_frame = frame.clone();
@@ -278,8 +279,8 @@ impl ScrollSession {
 			frame.clone(),
 			growth_rows,
 			candidate_viewport_top_y,
-			"worker_pairwise_vision",
-			Some(vision_motion_rows),
+			"worker_pairwise",
+			Some(pairwise_motion_rows),
 			Some(effective_motion_rows),
 			None,
 		)
@@ -411,7 +412,7 @@ impl ScrollSession {
 	}
 
 	pub(crate) fn resolve_worker_pairwise_motion_rows(
-		vision_motion_rows: u32,
+		pairwise_motion_rows: u32,
 		corroborated_shift_rows: Option<u32>,
 	) -> std::result::Result<u32, &'static str> {
 		let Some(corroborated_shift_rows) = corroborated_shift_rows else {
@@ -421,10 +422,10 @@ impl ScrollSession {
 		if corroborated_shift_rows == 0 {
 			return Err("worker_pairwise_zero_overlap_corroboration");
 		}
-		if vision_motion_rows.abs_diff(corroborated_shift_rows)
+		if pairwise_motion_rows.abs_diff(corroborated_shift_rows)
 			> WORKER_PAIRWISE_CORROBORATION_TOLERANCE_ROWS
 		{
-			return Err("worker_pairwise_vision_overlap_motion_mismatch");
+			return Err("worker_pairwise_overlap_motion_mismatch");
 		}
 
 		Ok(corroborated_shift_rows)

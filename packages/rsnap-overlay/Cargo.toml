@@ -22,7 +22,6 @@ fontdb             = { workspace = true }
 fontdue            = { workspace = true }
 image              = { workspace = true }
 rsnap-capture-core = { workspace = true }
-tracing            = { workspace = true }
 ttf-parser         = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -35,11 +34,4 @@ objc2-core-media         = { workspace = true }
 objc2-core-video         = { workspace = true }
 objc2-foundation         = { workspace = true }
 objc2-screen-capture-kit = { workspace = true }
-objc2-vision             = { workspace = true }
-
-[dev-dependencies]
-criterion = { workspace = true }
-
-[[bench]]
-harness = false
-name    = "scroll_capture"
+tracing                  = { workspace = true }

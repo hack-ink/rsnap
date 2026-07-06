@@ -18,3 +18,11 @@ fast_image_resize = { workspace = true }
 image             = { workspace = true }
 png               = { workspace = true }
 serde             = { workspace = true }
+tracing           = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+harness = false
+name    = "scroll_capture"

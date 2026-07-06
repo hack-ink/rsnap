@@ -133,7 +133,6 @@ fn make_codex_like_right_static_rail_frame(
 	})
 }
 
-#[cfg(target_os = "macos")]
 fn make_dense_unique_scroll_frame(width: u32, height: u32, start_row: u32) -> image::RgbaImage {
 	image::RgbaImage::from_fn(width, height, |x, y| {
 		let document_row = start_row.saturating_add(y);
@@ -150,29 +149,25 @@ fn make_dense_unique_scroll_frame(width: u32, height: u32, start_row: u32) -> im
 	})
 }
 
-#[cfg(target_os = "macos")]
 fn build_worker_pairwise_session(frame: image::RgbaImage) -> ScrollSession {
 	ScrollSession::new(frame, 320).expect("worker pairwise test session should initialize")
 }
 
-#[cfg(target_os = "macos")]
 fn growth_rows_i32(growth_rows: u32) -> i32 {
 	i32::try_from(growth_rows).expect("worker pairwise growth rows should fit in i32")
 }
 
-#[cfg(target_os = "macos")]
 fn worker_pairwise_growth_rows(
 	previous: &image::RgbaImage,
 	next: &image::RgbaImage,
 	reason: &str,
 ) -> u32 {
-	match pairwise_shift::classify_vision_downward_sample_motion_against(previous, next) {
+	match pairwise_shift::classify_pairwise_downward_sample_motion_against(previous, next) {
 		Some(matched) => matched.motion_rows,
 		None => panic!("{reason}"),
 	}
 }
 
-#[cfg(target_os = "macos")]
 fn assert_worker_pairwise_commit(
 	session: &mut ScrollSession,
 	previous: &image::RgbaImage,
@@ -180,7 +175,7 @@ fn assert_worker_pairwise_commit(
 	reason: &str,
 ) -> u32 {
 	let growth_rows = worker_pairwise_growth_rows(previous, &next, reason);
-	let outcome = match session.observe_worker_pairwise_vision_frame(next) {
+	let outcome = match session.observe_worker_pairwise_frame(next) {
 		Ok(outcome) => outcome,
 		Err(err) => panic!("{reason}: {err:#}"),
 	};
@@ -193,7 +188,6 @@ fn assert_worker_pairwise_commit(
 	growth_rows
 }
 
-#[cfg(target_os = "macos")]
 fn assert_worker_pairwise_successive_growth(frames: Vec<image::RgbaImage>, reason: &str) {
 	let base_height = frames[0].height();
 	let mut session = build_worker_pairwise_session(frames[0].clone());
@@ -212,7 +206,6 @@ fn assert_worker_pairwise_successive_growth(frames: Vec<image::RgbaImage>, reaso
 	assert_eq!(session.current_viewport_top_y(), expected_viewport_top_y);
 }
 
-#[cfg(target_os = "macos")]
 fn assert_worker_pairwise_repeat_between_steps(
 	base: image::RgbaImage,
 	step_one: image::RgbaImage,
@@ -224,7 +217,7 @@ fn assert_worker_pairwise_repeat_between_steps(
 	let step_one_reference = step_one.clone();
 	let first_growth =
 		assert_worker_pairwise_commit(&mut session, &base, step_one.clone(), first_reason);
-	let no_change_outcome = match session.observe_worker_pairwise_vision_frame(step_one) {
+	let no_change_outcome = match session.observe_worker_pairwise_frame(step_one) {
 		Ok(outcome) => outcome,
 		Err(err) => panic!("{first_reason}: {err:#}"),
 	};
@@ -245,7 +238,6 @@ fn assert_worker_pairwise_repeat_between_steps(
 	assert_eq!(session.current_viewport_top_y(), growth_rows_i32(first_growth + followup_growth));
 }
 
-#[cfg(target_os = "macos")]
 fn assert_worker_pairwise_blocked_overshot_does_not_commit_tail(
 	base: image::RgbaImage,
 	blocked: image::RgbaImage,
@@ -253,7 +245,7 @@ fn assert_worker_pairwise_blocked_overshot_does_not_commit_tail(
 	reason: &str,
 ) {
 	let mut session = build_worker_pairwise_session(base.clone());
-	let no_change_outcome = match session.observe_worker_pairwise_vision_frame(blocked.clone()) {
+	let no_change_outcome = match session.observe_worker_pairwise_frame(blocked.clone()) {
 		Ok(outcome) => outcome,
 		Err(err) => panic!("{reason}: {err:#}"),
 	};
@@ -265,7 +257,7 @@ fn assert_worker_pairwise_blocked_overshot_does_not_commit_tail(
 	assert_eq!(session.export_image().height(), base.height());
 	assert_eq!(session.current_viewport_top_y(), 0);
 
-	let followup_outcome = match session.observe_worker_pairwise_vision_frame(followup.clone()) {
+	let followup_outcome = match session.observe_worker_pairwise_frame(followup.clone()) {
 		Ok(outcome) => outcome,
 		Err(err) => panic!("{reason}: {err:#}"),
 	};
@@ -282,7 +274,6 @@ fn assert_pairwise_rejects_static_selection(previous: &image::RgbaImage, next: &
 	assert_eq!(pairwise_shift::estimate_pairwise_downward_shift_rows(previous, next), None);
 }
 
-#[cfg(target_os = "macos")]
 fn assert_worker_pairwise_rejects_static_selection(
 	base: image::RgbaImage,
 	next: image::RgbaImage,
@@ -292,7 +283,7 @@ fn assert_worker_pairwise_rejects_static_selection(
 		Ok(session) => session,
 		Err(err) => panic!("static-selection fixture should create session: {err:#}"),
 	};
-	let outcome = match session.observe_worker_pairwise_vision_frame(next) {
+	let outcome = match session.observe_worker_pairwise_frame(next) {
 		Ok(outcome) => outcome,
 		Err(err) => panic!("static-selection fixture should observe frame: {err:#}"),
 	};
@@ -655,9 +646,8 @@ fn pairwise_shift_estimate_rejects_static_selection_cases() {
 	assert_pairwise_rejects_static_selection(&unrelated_base, &unrelated_center);
 }
 
-#[cfg(target_os = "macos")]
 #[test]
-fn worker_pairwise_vision_rejects_static_selection_cases() {
+fn worker_pairwise_rejects_static_selection_cases() {
 	assert_worker_pairwise_rejects_static_selection(
 		make_static_sidebar_center_frame(320, 240, 145, 30, 0, 7, true),
 		make_static_sidebar_center_frame(320, 240, 145, 30, 72, 7, true),
@@ -725,15 +715,14 @@ fn transient_burst_visual_match_underconsuming_large_input_hint_does_not_commit(
 	assert_eq!(session.last_block_reason(), Some("visual_motion_underconsumed_input_hint"));
 }
 
-#[cfg(target_os = "macos")]
 #[test]
-fn worker_pairwise_vision_commits_substantial_downward_growth_with_corroboration() {
+fn worker_pairwise_commits_substantial_downward_growth_with_corroboration() {
 	let base = make_sparse_textlike_window(512, 640, 0);
 	let moved = make_sparse_textlike_window(512, 640, 90);
-	let matched = pairwise_shift::classify_vision_downward_sample_motion_against(&base, &moved)
-		.expect("vision registration should detect the substantial downward motion");
+	let matched = pairwise_shift::classify_pairwise_downward_sample_motion_against(&base, &moved)
+		.expect("pairwise registration should detect the substantial downward motion");
 	let mut session = ScrollSession::new(base, 320).unwrap();
-	let outcome = session.observe_worker_pairwise_vision_frame(moved).unwrap();
+	let outcome = session.observe_worker_pairwise_frame(moved).unwrap();
 
 	assert!(matched.motion_rows >= 32);
 	assert_eq!(
@@ -819,13 +808,12 @@ fn worker_pairwise_motion_resolution_blocks_uncorroborated_or_conflicting_motion
 	);
 	assert_eq!(
 		ScrollSession::resolve_worker_pairwise_motion_rows(180, Some(220)),
-		Err("worker_pairwise_vision_overlap_motion_mismatch")
+		Err("worker_pairwise_overlap_motion_mismatch")
 	);
 }
 
-#[cfg(target_os = "macos")]
 #[test]
-fn worker_pairwise_vision_uses_latest_committed_live_frame_for_followup_growth() {
+fn worker_pairwise_uses_latest_committed_live_frame_for_followup_growth() {
 	assert_worker_pairwise_successive_growth(
 		vec![
 			make_sparse_textlike_window(512, 640, 0),
@@ -836,9 +824,8 @@ fn worker_pairwise_vision_uses_latest_committed_live_frame_for_followup_growth()
 	);
 }
 
-#[cfg(target_os = "macos")]
 #[test]
-fn worker_pairwise_vision_handles_repeated_frame_between_growth_steps() {
+fn worker_pairwise_handles_repeated_frame_between_growth_steps() {
 	assert_worker_pairwise_repeat_between_steps(
 		make_sparse_textlike_window(512, 640, 0),
 		make_sparse_textlike_window(512, 640, 180),
@@ -848,9 +835,8 @@ fn worker_pairwise_vision_handles_repeated_frame_between_growth_steps() {
 	);
 }
 
-#[cfg(target_os = "macos")]
 #[test]
-fn worker_pairwise_vision_does_not_tail_rebase_after_blocked_overshot_frame() {
+fn worker_pairwise_does_not_tail_rebase_after_blocked_overshot_frame() {
 	assert_worker_pairwise_blocked_overshot_does_not_commit_tail(
 		make_browser_like_window(512, 640, 0),
 		make_browser_like_window(512, 640, 760),
@@ -859,9 +845,8 @@ fn worker_pairwise_vision_does_not_tail_rebase_after_blocked_overshot_frame() {
 	);
 }
 
-#[cfg(target_os = "macos")]
 #[test]
-fn worker_pairwise_vision_clears_preview_local_followup_carryover_on_no_change() {
+fn worker_pairwise_clears_preview_local_followup_carryover_on_no_change() {
 	let base = make_sparse_textlike_window(512, 640, 0);
 	let mut session = ScrollSession::new(base.clone(), 320).unwrap();
 
@@ -883,7 +868,7 @@ fn worker_pairwise_vision_clears_preview_local_followup_carryover_on_no_change()
 	session.pending_extreme_preview_only_local_tail_followup_remaining_blocks = 1;
 
 	assert_eq!(
-		session.observe_worker_pairwise_vision_frame(base).unwrap(),
+		session.observe_worker_pairwise_frame(base).unwrap(),
 		ScrollObserveOutcome::NoChange
 	);
 	assert!(session.last_preview_only_downward_local_sample.is_none());
@@ -893,12 +878,11 @@ fn worker_pairwise_vision_clears_preview_local_followup_carryover_on_no_change()
 	assert_eq!(session.pending_extreme_preview_only_local_tail_followup_remaining_blocks, 0);
 }
 
-#[cfg(target_os = "macos")]
 #[test]
-fn worker_pairwise_vision_clears_preview_local_followup_carryover_on_commit() {
+fn worker_pairwise_clears_preview_local_followup_carryover_on_commit() {
 	let base = make_sparse_textlike_window(512, 640, 0);
 	let moved = make_sparse_textlike_window(512, 640, 180);
-	let matched = pairwise_shift::classify_vision_downward_sample_motion_against(&base, &moved)
+	let matched = pairwise_shift::classify_pairwise_downward_sample_motion_against(&base, &moved)
 		.expect("pairwise registration should detect downward motion");
 	let mut session = ScrollSession::new(base, 320).unwrap();
 
@@ -920,7 +904,7 @@ fn worker_pairwise_vision_clears_preview_local_followup_carryover_on_commit() {
 	session.pending_extreme_preview_only_local_tail_followup_remaining_blocks = 1;
 
 	assert_eq!(
-		session.observe_worker_pairwise_vision_frame(moved).unwrap(),
+		session.observe_worker_pairwise_frame(moved).unwrap(),
 		ScrollObserveOutcome::Committed {
 			direction: ScrollDirection::Down,
 			growth_rows: matched.motion_rows,
@@ -933,9 +917,8 @@ fn worker_pairwise_vision_clears_preview_local_followup_carryover_on_commit() {
 	assert_eq!(session.pending_extreme_preview_only_local_tail_followup_remaining_blocks, 0);
 }
 
-#[cfg(target_os = "macos")]
 #[test]
-fn worker_pairwise_vision_commits_successive_slowdown_steps() {
+fn worker_pairwise_commits_successive_slowdown_steps() {
 	assert_worker_pairwise_successive_growth(
 		[0_u32, 180, 300, 380, 420]
 			.into_iter()
@@ -945,18 +928,17 @@ fn worker_pairwise_vision_commits_successive_slowdown_steps() {
 	);
 }
 
-#[cfg(target_os = "macos")]
 #[test]
-fn worker_pairwise_vision_commits_browser_like_growth_above_legacy_cap() {
+fn worker_pairwise_commits_browser_like_growth_above_legacy_cap() {
 	let base = make_browser_like_window(512, 640, 0);
 	let moved = make_browser_like_window(512, 640, 320);
-	let matched = pairwise_shift::classify_vision_downward_sample_motion_against(&base, &moved)
-		.expect("vision registration should detect the browser-like downward motion");
+	let matched = pairwise_shift::classify_pairwise_downward_sample_motion_against(&base, &moved)
+		.expect("pairwise registration should detect the browser-like downward motion");
 	let mut session = ScrollSession::new(base, 320).unwrap();
 
 	assert!(matched.motion_rows > 256);
 	assert_eq!(
-		session.observe_worker_pairwise_vision_frame(moved).unwrap(),
+		session.observe_worker_pairwise_frame(moved).unwrap(),
 		ScrollObserveOutcome::Committed {
 			direction: ScrollDirection::Down,
 			growth_rows: matched.motion_rows,
@@ -966,9 +948,8 @@ fn worker_pairwise_vision_commits_browser_like_growth_above_legacy_cap() {
 	assert_eq!(session.current_viewport_top_y(), i32::try_from(matched.motion_rows).unwrap());
 }
 
-#[cfg(target_os = "macos")]
 #[test]
-fn worker_pairwise_vision_commits_successive_browser_like_steps() {
+fn worker_pairwise_commits_successive_browser_like_steps() {
 	assert_worker_pairwise_successive_growth(
 		[0_u32, 180, 360, 540, 720]
 			.into_iter()
@@ -978,9 +959,8 @@ fn worker_pairwise_vision_commits_successive_browser_like_steps() {
 	);
 }
 
-#[cfg(target_os = "macos")]
 #[test]
-fn worker_pairwise_vision_handles_repeated_browser_like_frame_between_growth_steps() {
+fn worker_pairwise_handles_repeated_browser_like_frame_between_growth_steps() {
 	assert_worker_pairwise_repeat_between_steps(
 		make_browser_like_window(512, 640, 0),
 		make_browser_like_window(512, 640, 180),
@@ -990,9 +970,8 @@ fn worker_pairwise_vision_handles_repeated_browser_like_frame_between_growth_ste
 	);
 }
 
-#[cfg(target_os = "macos")]
 #[test]
-fn worker_pairwise_vision_catches_up_from_committed_frontier_after_reacquire_block() {
+fn worker_pairwise_catches_up_from_committed_frontier_after_reacquire_block() {
 	let base = make_dense_unique_scroll_frame(512, 640, 0);
 	let first = make_dense_unique_scroll_frame(512, 640, 180);
 	let first_reference = first.clone();
@@ -1020,7 +999,7 @@ fn worker_pairwise_vision_catches_up_from_committed_frontier_after_reacquire_blo
 	assert_eq!(session.current_viewport_top_y(), growth_rows_i32(first_growth));
 
 	let catchup_outcome =
-		session.observe_worker_pairwise_vision_frame_with_motion_hint(catchup, Some(360)).unwrap();
+		session.observe_worker_pairwise_frame_with_motion_hint(catchup, Some(360)).unwrap();
 
 	assert_eq!(
 		catchup_outcome,
@@ -1030,9 +1009,8 @@ fn worker_pairwise_vision_catches_up_from_committed_frontier_after_reacquire_blo
 	assert_eq!(session.export_image().height(), 640 + first_growth + 360);
 }
 
-#[cfg(target_os = "macos")]
 #[test]
-fn worker_pairwise_vision_browser_like_followup_does_not_commit_tail_after_blocked_overshot() {
+fn worker_pairwise_browser_like_followup_does_not_commit_tail_after_blocked_overshot() {
 	assert_worker_pairwise_blocked_overshot_does_not_commit_tail(
 		make_browser_like_window(512, 640, 0),
 		make_browser_like_window(512, 640, 700),
@@ -1041,9 +1019,8 @@ fn worker_pairwise_vision_browser_like_followup_does_not_commit_tail_after_block
 	);
 }
 
-#[cfg(target_os = "macos")]
 #[test]
-fn worker_pairwise_vision_blocks_rewind_recovery_until_frontier_is_reacquired() {
+fn worker_pairwise_blocks_rewind_recovery_until_frontier_is_reacquired() {
 	let base = make_browser_like_window(512, 640, 0);
 	let first = make_browser_like_window(512, 640, 100);
 	let rewind = make_browser_like_window(512, 640, 60);
@@ -1061,7 +1038,7 @@ fn worker_pairwise_vision_blocks_rewind_recovery_until_frontier_is_reacquired() 
 
 	assert_eq!(first_growth, 100);
 	assert!(matches!(
-		session.observe_worker_pairwise_vision_frame(rewind).unwrap(),
+		session.observe_worker_pairwise_frame(rewind).unwrap(),
 		ScrollObserveOutcome::UnsupportedDirection { direction: ScrollDirection::Up }
 			| ScrollObserveOutcome::PreviewUpdated
 			| ScrollObserveOutcome::NoChange
@@ -1069,7 +1046,7 @@ fn worker_pairwise_vision_blocks_rewind_recovery_until_frontier_is_reacquired() 
 	assert_eq!(session.export_image().height(), height_after_first);
 	assert_eq!(session.current_viewport_top_y(), 100);
 	assert!(matches!(
-		session.observe_worker_pairwise_vision_frame(below_frontier).unwrap(),
+		session.observe_worker_pairwise_frame(below_frontier).unwrap(),
 		ScrollObserveOutcome::PreviewUpdated
 			| ScrollObserveOutcome::NoChange
 			| ScrollObserveOutcome::UnsupportedDirection { .. }
@@ -1077,13 +1054,13 @@ fn worker_pairwise_vision_blocks_rewind_recovery_until_frontier_is_reacquired() 
 	assert_eq!(session.export_image().height(), height_after_first);
 	assert_eq!(session.current_viewport_top_y(), 100);
 	assert!(matches!(
-		session.observe_worker_pairwise_vision_frame(reacquired).unwrap(),
+		session.observe_worker_pairwise_frame(reacquired).unwrap(),
 		ScrollObserveOutcome::PreviewUpdated | ScrollObserveOutcome::NoChange
 	));
 	assert_eq!(session.export_image().height(), height_after_first);
 	assert_eq!(session.current_viewport_top_y(), 100);
 	assert_eq!(
-		session.observe_worker_pairwise_vision_frame(beyond_frontier).unwrap(),
+		session.observe_worker_pairwise_frame(beyond_frontier).unwrap(),
 		ScrollObserveOutcome::Committed { direction: ScrollDirection::Down, growth_rows: 20 }
 	);
 	assert_eq!(session.export_image().height(), height_after_first + 20);

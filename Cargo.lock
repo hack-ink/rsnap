@@ -755,16 +755,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "objc2-core-image"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e5d563b38d2b97209f8e861173de434bd0214cf020e3423a52624cd1d989f006"
-dependencies = [
- "objc2",
- "objc2-foundation",
-]
-
-[[package]]
 name = "objc2-core-media"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -778,16 +768,6 @@ dependencies = [
  "objc2-core-audio-types",
  "objc2-core-foundation",
  "objc2-core-video",
-]
-
-[[package]]
-name = "objc2-core-ml"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "201b055e6acfa0f9f15568255d3f03ce2b54bc86d1814442dc69138e36813e18"
-dependencies = [
- "objc2",
- "objc2-foundation",
 ]
 
 [[package]]
@@ -822,17 +802,6 @@ dependencies = [
  "libc",
  "objc2",
  "objc2-core-foundation",
-]
-
-[[package]]
-name = "objc2-image-io"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32b0446e98cf4a784cc7a0177715ff317eeaa8463841c616cfc78aa4f953c4ea"
-dependencies = [
- "objc2",
- "objc2-core-foundation",
- "objc2-core-graphics",
 ]
 
 [[package]]
@@ -884,25 +853,6 @@ checksum = "7902ac02859fc1f7045f8b598c63f1ae0cc7efeaa06a9bc9f3d9a3c955974fa4"
 dependencies = [
  "objc2",
  "objc2-foundation",
-]
-
-[[package]]
-name = "objc2-vision"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bfc194758a2d5d7540b1ad283bfb9ca318ec608991892326e95b428230b2689b"
-dependencies = [
- "block2",
- "objc2",
- "objc2-av-foundation",
- "objc2-core-foundation",
- "objc2-core-graphics",
- "objc2-core-image",
- "objc2-core-media",
- "objc2-core-ml",
- "objc2-core-video",
- "objc2-foundation",
- "objc2-image-io",
 ]
 
 [[package]]
@@ -1109,10 +1059,12 @@ name = "rsnap-capture-core"
 version = "0.2.10"
 dependencies = [
  "color-eyre",
+ "criterion",
  "fast_image_resize",
  "image",
  "png",
  "serde",
+ "tracing",
 ]
 
 [[package]]
@@ -1129,7 +1081,6 @@ version = "0.2.10"
 dependencies = [
  "block2",
  "color-eyre",
- "criterion",
  "dispatch2",
  "font8x8",
  "fontdb",
@@ -1142,7 +1093,6 @@ dependencies = [
  "objc2-core-video",
  "objc2-foundation",
  "objc2-screen-capture-kit",
- "objc2-vision",
  "rsnap-capture-core",
  "tracing",
  "ttf-parser 0.25.1",
