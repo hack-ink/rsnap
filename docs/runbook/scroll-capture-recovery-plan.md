@@ -29,7 +29,7 @@ Scroll Capture on this branch uses the accepted universal macOS path:
 - overlay-local wheel forwarding through short all-overlay passthrough windows;
 - ordered ScreenCaptureKit region frames with a below-overlay region fallback when the live stream is
   not producing fresh selected-region frames;
-- Rust worker-pairwise Vision proposal plus overlap corroboration;
+- Rust worker-pairwise registration proposal plus overlap corroboration;
 - append-only monotonic downward commits;
 - rewind/no-overlap fail-closed behavior;
 - first-frozen-toolbar tint protection and active scroll toolbar live-HUD glass backing.

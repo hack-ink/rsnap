@@ -4,7 +4,7 @@ use std::hint;
 
 use criterion::{self, Criterion};
 
-use rsnap_overlay::bench_support::{ScrollCaptureBenchHarness, ScrollCaptureBenchScenario};
+use rsnap_capture_core::{ScrollCaptureBenchHarness, ScrollCaptureBenchScenario};
 
 criterion::criterion_group!(
 	benches,

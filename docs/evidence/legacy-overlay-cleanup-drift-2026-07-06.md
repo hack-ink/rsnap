@@ -25,8 +25,8 @@ last_verified: 2026-07-06
 
 - `Cargo.toml` and `packages/rsnap-overlay/Cargo.toml` remove the `egui*` workspace dependencies
   and crate dependencies.
-- `packages/rsnap-overlay/src/lib.rs` exposes only benchmark support, frozen edit/export, scroll
-  stitching, and macOS live sampling transition helpers.
+- `packages/rsnap-overlay/src/lib.rs` exposes only frozen edit/export and macOS live sampling
+  transition helpers; scroll stitching has since moved to `packages/rsnap-capture-core/`.
 - `packages/rsnap-overlay/src/point.rs`, `packages/rsnap-overlay/src/frozen_export.rs`,
   `packages/rsnap-overlay/src/frozen_export/stroke_raster.rs`, and
   `packages/rsnap-overlay/src/text_rendering.rs` replace the former UI-toolkit point/font coupling
@@ -37,7 +37,7 @@ last_verified: 2026-07-06
 - Validation commands run on this change: `cargo check --workspace --all-features --all-targets`,
   `cargo clippy --all-features --all-targets --workspace -- -D clippy::all -D clippy::too_many_lines
   -D clippy::unwrap_used -D clippy::use_self -D clippy::wildcard_imports -D missing-docs -D
-  unused-crate-dependencies -D warnings`, `cargo test -p rsnap-overlay scroll_capture --lib`,
+  unused-crate-dependencies -D warnings`, `cargo test -p rsnap-capture-core scroll_capture --lib`,
   `cargo +nightly fmt --all -- --check`, `git diff --check`, and docs-reference link checks.
 
 ## Reverse Checks

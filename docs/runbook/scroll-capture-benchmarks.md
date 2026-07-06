@@ -9,14 +9,14 @@ last_verified: 2026-07-06
 ---
 # Scroll-Capture Benchmark Runbook
 
-Goal: Run the deterministic `rsnap-overlay` scroll-capture benchmarks, understand the committed
+Goal: Run the deterministic `rsnap-capture-core` scroll-capture benchmarks, understand the committed
 fixture shape, and save or compare local baselines without touching a desktop session.
 
 Read this when: You are validating scroll-capture performance, comparing image-processing changes,
 or refreshing the local baseline for `XY-111` style non-GUI benchmarks.
 
-Inputs: `docs/spec/performance.md`; `packages/rsnap-overlay/benches/scroll_capture.rs`;
-`packages/rsnap-overlay/src/scroll_capture.rs`
+Inputs: `docs/spec/performance.md`; `packages/rsnap-capture-core/benches/scroll_capture.rs`;
+`packages/rsnap-capture-core/src/scroll_capture.rs`
 
 Depends on: `docs/spec/performance.md`
 
@@ -61,7 +61,7 @@ Covered benchmark groups:
 Use the direct crate benchmark target when you only need the scroll-capture hot paths:
 
 ```bash
-cargo bench -p rsnap-overlay --bench scroll_capture -- --sample-size 10 --warm-up-time 0.1 --measurement-time 0.1
+cargo bench -p rsnap-capture-core --bench scroll_capture -- --sample-size 10 --warm-up-time 0.1 --measurement-time 0.1
 ```
 
 That command is the fast local smoke-sized run used for verification in this repo.
@@ -72,7 +72,7 @@ When you want a reusable before/after comparison on the same machine, save a nam
 baseline:
 
 ```bash
-cargo bench -p rsnap-overlay --bench scroll_capture -- --save-baseline local-scroll-capture
+cargo bench -p rsnap-capture-core --bench scroll_capture -- --save-baseline local-scroll-capture
 ```
 
 Criterion stores the baseline under `target/criterion`, so keep comparisons on the same checkout
@@ -83,7 +83,7 @@ and machine class when possible.
 After code changes, compare the same target against the saved baseline:
 
 ```bash
-cargo bench -p rsnap-overlay --bench scroll_capture -- --baseline local-scroll-capture
+cargo bench -p rsnap-capture-core --bench scroll_capture -- --baseline local-scroll-capture
 ```
 
 Use this comparison to spot relative regressions in the fingerprint, overlap-match, and

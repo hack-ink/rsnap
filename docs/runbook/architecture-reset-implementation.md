@@ -80,7 +80,7 @@ Start with the smallest checked-in command set that matches the slice:
 - Rust logic or cross-platform product behavior:
   run `cargo make test`
 - scroll-capture behavior or stitching logic:
-  run `cargo test -p rsnap-overlay scroll_capture --lib`
+  run `cargo test -p rsnap-capture-core scroll_capture --lib`
 - performance-sensitive rendering or interaction:
   run `scripts/perf/local.sh`
 - dedicated macOS desktop readiness without claiming full live acceptance:

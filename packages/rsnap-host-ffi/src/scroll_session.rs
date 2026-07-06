@@ -4,9 +4,7 @@ use crate::abi::{
 	RsnapOwnedRgbaRegion, RsnapScrollObserveOutcomeKind, RsnapScrollObserveResult,
 	RsnapScrollSessionHandle, RsnapStatus,
 };
-use rsnap_overlay::scroll_stitching::{
-	ScrollStitchImage, ScrollStitchObserveOutcome, ScrollStitchSession,
-};
+use rsnap_capture_core::{ScrollStitchImage, ScrollStitchObserveOutcome, ScrollStitchSession};
 
 /// Creates a scroll-capture stitcher from the first frozen viewport frame.
 ///
