@@ -33,8 +33,8 @@ The active host/core reset uses these checked-in crates:
 - `packages/rsnap-capture-core/`
 - `packages/rsnap-host-ffi/`
 
-`apps/rsnap/` and `packages/rsnap-overlay/` remain transitional implementation containers. They are
-not the durable source of truth for the reset boundary.
+`apps/rsnap/` remains a launcher/bootstrap container. It is not the durable source of truth for the
+reset boundary.
 
 ## Rust product-core protocol
 

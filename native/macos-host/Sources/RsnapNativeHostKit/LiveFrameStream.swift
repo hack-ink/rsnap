@@ -3,40 +3,36 @@ import CoreGraphics
 import Foundation
 import RsnapHostBridge
 
-final class LiveFrameStreamBroker: @unchecked Sendable {
-	private struct SamplerMonitor: Equatable {
-		let id: UInt32
-		let appKitFrame: CGRect
-		let quartzFrame: CGRect
-		let scaleFactorX1000: UInt32
-	}
+package struct RGBARegionFrameSnapshot: Equatable, Sendable {
+	package let frameSequence: UInt64
+	package let frameAgeMicroseconds: UInt64
+	package let region: RGBARegionSnapshot
 
+	package init(frameSequence: UInt64, frameAgeMicroseconds: UInt64, region: RGBARegionSnapshot) {
+		self.frameSequence = frameSequence
+		self.frameAgeMicroseconds = frameAgeMicroseconds
+		self.region = region
+	}
+}
+
+final class LiveFrameStreamBroker: @unchecked Sendable {
 	private static let primeThrottleInterval: TimeInterval = 1.0 / 120.0
 
 	private let stateLock = NSLock()
-	private var sampler: RsnapLiveSampler?
-	private var selfCaptureExceptionWindowIDs: Set<CGWindowID> = []
-	private var monitors: [SamplerMonitor] = []
-	private var mainDisplayHeight: CGFloat = 0
-	private var streamGeneration: UInt64 = 0
-	private var lastPrimedMonitorID: UInt32?
-	private var lastPrimeGeneration: UInt64 = 0
+	private let frozenFrameAuthority: FrozenFrameAuthority
+	private var includedCurrentProcessWindowIDs: Set<CGWindowID> = []
+	private var screens: [NSScreen] = []
+	private var lastPrimedDisplayID: CGDirectDisplayID?
 	private var lastPrimeUptime: TimeInterval = 0
 
-	func prepareSampler(reason: String = "unspecified") {
+	init(frozenFrameAuthority: FrozenFrameAuthority) {
+		self.frozenFrameAuthority = frozenFrameAuthority
+	}
+
+	func prepareAuthority(reason: String = "unspecified") {
 		let startedAt = ProcessInfo.processInfo.systemUptime
-		stateLock.lock()
-		let created: Bool
-		if sampler == nil {
-			sampler = Self.makeSampler(exceptionWindowIDs: selfCaptureExceptionWindowIDs)
-			created = sampler != nil
-		} else {
-			created = false
-		}
-		stateLock.unlock()
-		NativeHostTelemetry.liveStreamSamplerPrepared(
+		NativeHostTelemetry.liveStreamAuthorityPrepared(
 			totalMilliseconds: NativeHostTelemetry.milliseconds(since: startedAt),
-			created: created,
 			reason: reason
 		)
 	}
@@ -46,75 +42,54 @@ final class LiveFrameStreamBroker: @unchecked Sendable {
 		captureID: UInt64 = 0
 	) {
 		stateLock.lock()
-		let previousWindowCount = selfCaptureExceptionWindowIDs.count
-		guard windowIDs != selfCaptureExceptionWindowIDs else {
+		let previousWindowCount = includedCurrentProcessWindowIDs.count
+		guard windowIDs != includedCurrentProcessWindowIDs else {
 			stateLock.unlock()
 			return
 		}
-		selfCaptureExceptionWindowIDs = windowIDs
-		streamGeneration &+= 1
-		monitors.removeAll()
-		mainDisplayHeight = 0
-		lastPrimedMonitorID = nil
-		lastPrimeGeneration = 0
+		includedCurrentProcessWindowIDs = windowIDs
+		let screens = self.screens
+		lastPrimedDisplayID = nil
 		lastPrimeUptime = 0
-		let oldSampler = sampler
-		if oldSampler != nil {
-			sampler = Self.makeSampler(exceptionWindowIDs: windowIDs)
-		}
 		stateLock.unlock()
 		NativeHostTelemetry.liveStreamSelfCaptureExceptionUpdate(
 			captureID: captureID,
 			previousWindowCount: previousWindowCount,
 			nextWindowCount: windowIDs.count,
-			samplerRebuilt: oldSampler != nil
+			samplerRebuilt: false
 		)
-		try? oldSampler?.reset()
+		guard screens.isEmpty == false else {
+			return
+		}
+		start(
+			for: screens,
+			prewarmPoint: nil,
+			captureID: captureID
+		)
 	}
 
 	func start(for screens: [NSScreen], prewarmPoint: CGPoint? = nil, captureID: UInt64 = 0) {
 		stateLock.lock()
-		if sampler == nil {
-			sampler = Self.makeSampler(exceptionWindowIDs: selfCaptureExceptionWindowIDs)
-		}
-		let mainDisplayHeight = Self.mainDisplayHeight(for: screens)
-		self.mainDisplayHeight = mainDisplayHeight
-		let nextMonitors = screens.compactMap {
-			Self.monitorSnapshot(for: $0, mainDisplayHeight: mainDisplayHeight)
-		}
-		let targetMonitor = prewarmPoint.flatMap { point in
-			nextMonitors.first(where: { $0.appKitFrame.inclusivelyContains(point) })
-		}
-		let monitorsUnchanged = nextMonitors == monitors
-		monitors = nextMonitors
-		if monitorsUnchanged {
-			stateLock.unlock()
-			if let targetMonitor {
-				prime(monitor: targetMonitor)
-			}
-			return
-		}
-		streamGeneration &+= 1
+		self.screens = screens
+		let includedWindowIDs = includedCurrentProcessWindowIDs
 		stateLock.unlock()
-		if let targetMonitor {
-			prime(monitor: targetMonitor)
-		}
+		frozenFrameAuthority.start(
+			for: screens,
+			captureID: captureID,
+			source: "live_region_stream",
+			rebuildContentFilter: true,
+			includedCurrentProcessWindowIDs: includedWindowIDs
+		)
+		prime(at: prewarmPoint)
 	}
 
 	func stop() {
 		stateLock.lock()
-		streamGeneration &+= 1
-		monitors.removeAll()
-		mainDisplayHeight = 0
-		lastPrimedMonitorID = nil
-		lastPrimeGeneration = 0
+		screens.removeAll()
+		lastPrimedDisplayID = nil
 		lastPrimeUptime = 0
-		let sampler = self.sampler
 		stateLock.unlock()
-		guard let sampler else {
-			return
-		}
-		try? sampler.reset()
+		frozenFrameAuthority.stop()
 	}
 
 	func nextRegionFrame(
@@ -122,21 +97,8 @@ final class LiveFrameStreamBroker: @unchecked Sendable {
 		afterFrameSequence: UInt64,
 		waitForFresh: Bool
 	) -> RGBARegionFrameSnapshot? {
-		guard let monitor = monitor(containing: CGPoint(x: rect.midX, y: rect.midY)) else {
-			return nil
-		}
-		stateLock.lock()
-		let sampler = self.sampler
-		let mainDisplayHeight = self.mainDisplayHeight
-		let encodedMonitor = samplerMonitorSnapshot(for: monitor)
-		stateLock.unlock()
-		guard let sampler else {
-			return nil
-		}
-		let quartzRect = Self.appKitRectToQuartz(rect, mainDisplayHeight: mainDisplayHeight)
-		return try? sampler.nextRegionFrame(
-			monitor: encodedMonitor,
-			rect: quartzRect,
+		frozenFrameAuthority.nextRegionFrame(
+			in: rect,
 			afterFrameSequence: afterFrameSequence,
 			waitForFresh: waitForFresh
 		)
@@ -148,18 +110,8 @@ final class LiveFrameStreamBroker: @unchecked Sendable {
 		afterFrameSequence: UInt64,
 		waitForFresh: Bool
 	) -> RGBARegionFrameSnapshot? {
-		guard let monitor = monitor(containing: CGPoint(x: rect.midX, y: rect.midY)) else {
-			return nil
-		}
-		stateLock.lock()
-		let sampler = self.sampler
-		let encodedMonitor = samplerMonitorSnapshot(for: monitor)
-		stateLock.unlock()
-		guard let sampler else {
-			return nil
-		}
-		return try? sampler.nextRegionFrame(
-			monitor: encodedMonitor,
+		frozenFrameAuthority.nextRegionFrame(
+			in: rect,
 			pixelRect: pixelRect,
 			afterFrameSequence: afterFrameSequence,
 			waitForFresh: waitForFresh
@@ -167,85 +119,38 @@ final class LiveFrameStreamBroker: @unchecked Sendable {
 	}
 
 	func prime(at point: CGPoint?) {
-		guard let point, let monitor = monitor(containing: point) else {
+		guard let point, let displayID = displayID(containing: point) else {
 			return
 		}
-		prime(monitor: monitor)
-	}
-
-	private func monitor(containing point: CGPoint) -> SamplerMonitor? {
 		stateLock.lock()
-		let monitors = self.monitors
-		stateLock.unlock()
-		return monitors.first(where: { $0.appKitFrame.inclusivelyContains(point) })
-	}
-
-	private static func makeSampler(exceptionWindowIDs: Set<CGWindowID>) -> RsnapLiveSampler? {
-		try? RsnapLiveSampler(selfCaptureExceptionWindowIDs: exceptionWindowIDs.sorted())
-	}
-
-	private func prime(monitor: SamplerMonitor) {
-		stateLock.lock()
-		let sampler = self.sampler
-		let generation = streamGeneration
 		let now = ProcessInfo.processInfo.systemUptime
-		if lastPrimedMonitorID == monitor.id,
-			lastPrimeGeneration == generation,
+		if lastPrimedDisplayID == displayID,
 			now - lastPrimeUptime < Self.primeThrottleInterval
 		{
 			stateLock.unlock()
 			return
 		}
-		lastPrimedMonitorID = monitor.id
-		lastPrimeGeneration = generation
+		lastPrimedDisplayID = displayID
 		lastPrimeUptime = now
+		let screens = self.screens
+		let includedWindowIDs = includedCurrentProcessWindowIDs
 		stateLock.unlock()
-		guard let sampler else {
+		guard screens.isEmpty == false else {
 			return
 		}
-		try? sampler.primeMonitor(samplerMonitorSnapshot(for: monitor))
-	}
-
-	private func samplerMonitorSnapshot(for monitor: SamplerMonitor) -> MonitorSnapshot {
-		MonitorSnapshot(
-			id: monitor.id,
-			frame: monitor.quartzFrame,
-			scaleFactorX1000: monitor.scaleFactorX1000
+		frozenFrameAuthority.start(
+			for: screens,
+			captureID: 0,
+			source: "live_region_prime",
+			rebuildContentFilter: false,
+			includedCurrentProcessWindowIDs: includedWindowIDs
 		)
 	}
 
-	private static func monitorSnapshot(
-		for screen: NSScreen,
-		mainDisplayHeight: CGFloat
-	) -> SamplerMonitor? {
-		guard let displayID = screen.nativeDisplayID else {
-			return nil
-		}
-		let appKitFrame = screen.frame
-		return SamplerMonitor(
-			id: displayID,
-			appKitFrame: appKitFrame,
-			quartzFrame: appKitRectToQuartz(appKitFrame, mainDisplayHeight: mainDisplayHeight),
-			scaleFactorX1000: UInt32(max((screen.backingScaleFactor * 1_000).rounded(), 1_000))
-		)
+	private func displayID(containing point: CGPoint) -> CGDirectDisplayID? {
+		stateLock.lock()
+		let screens = self.screens
+		stateLock.unlock()
+		return screens.first(where: { $0.frame.inclusivelyContains(point) })?.nativeDisplayID
 	}
-
-	private static func mainDisplayHeight(for screens: [NSScreen]) -> CGFloat {
-		screens
-			.first(where: { $0.frame.origin.x.rounded() == 0 && $0.frame.origin.y.rounded() == 0 })?
-			.frame.height
-			.rounded()
-			?? screens.first?.frame.height.rounded()
-			?? 0
-	}
-
-	private static func appKitRectToQuartz(_ rect: CGRect, mainDisplayHeight: CGFloat) -> CGRect {
-		CGRect(
-			x: rect.minX,
-			y: mainDisplayHeight - rect.maxY,
-			width: rect.width,
-			height: rect.height
-		)
-	}
-
 }

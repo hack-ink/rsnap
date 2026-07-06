@@ -98,11 +98,10 @@ Fallback behavior:
   samples the latest eligible frame; Rust overlay no longer owns cache-only latest region
   sampling. This path uses the frozen snapshot age budget, not the longer live RGB display budget,
   so stale stream frames yield to native fallback capture.
-- Scroll/backdrop continuity: Rust `rsnap-overlay` keeps the transitional ordered region-frame
-  stream behind `rsnap-host-ffi`.
+- Scroll/backdrop continuity: Swift `FrozenFrameAuthority` owns the ordered region-frame stream
+  used by native scroll and backdrop workers. This path no longer crosses `rsnap-host-ffi`.
 - Minimum: macOS 12.3+.
-- Cursor/loupe FFI has been removed; the Rust live sampler no longer owns live chrome cursor
-  sampling.
+- Cursor/loupe FFI has been removed; no Rust live sampler remains in the active workspace.
 - Stream queue depth is tuned for latest-frame behavior and low-latency live response.
 - HUD/Loupe movement remains throttled in the render scheduling path.
 
@@ -125,8 +124,8 @@ Fallback behavior:
 
 The legacy live sampler latest-monitor APIs were cache-oriented. They could return the last warm
 stream frame without proving when that frame was captured, so they have been removed from the
-native-host bridge. The live HUD now samples RGB and loupe pixels through the Swift native frozen
-frame authority, while Rust live-stream FFI is retained only for region-frame continuity.
+native-host bridge. The live HUD now samples RGB, loupe pixels, latest regions, and ordered region
+frames through the Swift native frozen-frame authority.
 
 Frozen commit must use `FrozenFrameAuthority` or another source with equivalent provenance:
 
