@@ -138,6 +138,9 @@ Key paths:
   worker responses, external input replay, and frame observation; live-stream polling, backlog
   consumption, duplicate-frame refresh, and stale-input grace live under
   `overlay/scroll_runtime/live_stream.rs`
+- `packages/rsnap-overlay/src/overlay/input_runtime.rs`: overlay focus, modifier, and mouse-button
+  input routing; cursor sampling, window-to-global coordinate mapping, cursor-move tracing/timing,
+  and live cursor sample requests live under `overlay/input_runtime/cursor_movement.rs`
 - `packages/rsnap-overlay/src/worker.rs`: overlay worker thread and backend request handlers;
   worker message protocol and pending-request coalescing live under `worker/`
 - `packages/rsnap-overlay/src/live_frame_stream_macos.rs`: current macOS live-stream support
