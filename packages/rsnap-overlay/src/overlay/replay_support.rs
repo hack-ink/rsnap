@@ -1,5 +1,6 @@
 mod model;
 mod semantic;
+mod stats;
 mod summary;
 
 pub use model::{
@@ -24,24 +25,7 @@ use crate::overlay::{
 	ScrollObserveOutcome, ScrollSession,
 	trace_recording::{LoadedScrollCaptureLiveTrace, ScrollCaptureLiveTraceEntry},
 };
-use crate::scroll_capture::ScrollCommitTelemetry;
-
-#[derive(Default)]
-struct ReplayStats {
-	step_results: Vec<RecordedScrollCaptureReplayStepResult>,
-	previous_recorded_export_height: Option<u32>,
-	previous_recorded_preview_height: Option<u32>,
-	previous_replayed_export_height: Option<u32>,
-	previous_replayed_preview_height: Option<u32>,
-	previous_live_frame_seq: Option<u64>,
-	previous_recorded_frame: Option<RgbaImage>,
-	max_recorded_export_jump: u32,
-	max_recorded_preview_jump: u32,
-	max_replayed_export_jump: u32,
-	max_replayed_preview_jump: u32,
-	max_recorded_committed_growth_rows: u32,
-	max_replayed_committed_growth_rows: u32,
-}
+use stats::{ReplayStats, ReplayStepResultRecord};
 
 /// Replays one recorded live trace through shipping overlay logic.
 pub fn replay_recorded_scroll_capture_trace(
@@ -165,7 +149,7 @@ fn replay_frame_entry(
 	let recorded_preview_height =
 		frame.snapshot_after.preview_dimensions.map(|dimensions| dimensions[1]);
 
-	update_recorded_height_jumps(replay_stats, recorded_export_height, recorded_preview_height);
+	replay_stats.update_recorded_height_jumps(recorded_export_height, recorded_preview_height);
 
 	let image = image::open(trace.resolve_frame_path(&frame.frame_path))
 		.wrap_err("failed to open recorded live trace frame")?
@@ -219,7 +203,7 @@ fn replay_frame_entry(
 	})?;
 	let telemetry = active_session.commit_telemetry();
 	let frame_source: RecordedScrollCaptureReplayFrameSource = frame.frame_source.into();
-	let live_frame_gap = update_live_frame_gap(replay_stats, frame_source.clone());
+	let live_frame_gap = replay_stats.update_live_frame_gap(frame_source.clone());
 	let recorded_outcome: RecordedScrollCaptureReplayRecordedOutcome = frame.outcome.clone().into();
 	let replayed_export_height = active_session.export_image().height();
 	let replayed_session_preview_height = active_session.preview_display_image().height();
@@ -247,12 +231,11 @@ fn replay_frame_entry(
 			replay_stats.max_replayed_committed_growth_rows.max(growth_rows);
 	}
 
-	update_replayed_height_jumps(replay_stats, replayed_export_height, replayed_preview_height);
-	push_replay_step_result(
-		replay_stats,
+	replay_stats.update_replayed_height_jumps(replayed_export_height, replayed_preview_height);
+	replay_stats.push_step_result(ReplayStepResultRecord {
 		session,
 		active_session,
-		&telemetry,
+		telemetry: &telemetry,
 		frame,
 		frame_source,
 		live_frame_gap,
@@ -265,208 +248,11 @@ fn replay_frame_entry(
 		replayed_session_preview_height,
 		recorded_estimated_downward_shift_rows,
 		semantic_issue,
-	);
+	});
 
 	replay_stats.previous_recorded_frame = Some(image);
 
 	Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-fn push_replay_step_result(
-	replay_stats: &mut ReplayStats,
-	session: &OverlaySession,
-	active_session: &ScrollSession,
-	telemetry: &ScrollCommitTelemetry,
-	frame: &ScrollCaptureTraceFrameEntry,
-	frame_source: RecordedScrollCaptureReplayFrameSource,
-	live_frame_gap: Option<u64>,
-	recorded_outcome: RecordedScrollCaptureReplayRecordedOutcome,
-	replayed_outcome: ScrollCaptureReplayOutcome,
-	recorded_export_height: Option<u32>,
-	recorded_preview_height: Option<u32>,
-	replayed_export_height: u32,
-	replayed_preview_height: u32,
-	replayed_session_preview_height: u32,
-	recorded_estimated_downward_shift_rows: Option<u32>,
-	semantic_issue: Option<RecordedScrollCaptureSemanticIssue>,
-) {
-	replay_stats.step_results.push(RecordedScrollCaptureReplayStepResult {
-		frame_index: replay_stats.step_results.len(),
-		frame_path: frame.frame_path.clone(),
-		observed_at_ms: frame.observed_at_ms,
-		frame_source,
-		live_frame_gap,
-		recorded_outcome,
-		replayed_outcome,
-		export_height: replayed_export_height,
-		preview_height: replayed_preview_height,
-		session_preview_height: replayed_session_preview_height,
-		recorded_export_height,
-		recorded_preview_height,
-		viewport_top_y: active_session.current_viewport_top_y(),
-		last_commit_decision_source: telemetry.last_commit_decision_source,
-		last_commit_detected_motion_rows: telemetry.last_commit_detected_motion_rows,
-		last_block_reason: telemetry.last_block_reason,
-		replayed_downward_sample_registration_result: telemetry
-			.last_downward_sample_registration_result,
-		replayed_downward_sample_registration_source: telemetry
-			.last_downward_sample_registration_source,
-		replayed_downward_sample_registration_motion_rows: telemetry
-			.last_downward_sample_registration_motion_rows,
-		replayed_downward_sample_registration_provisional_viewport_top_y: telemetry
-			.last_downward_sample_registration_provisional_viewport_top_y,
-		replayed_observed_sample_registration_result: telemetry.observed_sample_registration_result,
-		replayed_observed_sample_registration_reason: telemetry.observed_sample_registration_reason,
-		replayed_observed_sample_registration_motion_rows: telemetry
-			.observed_sample_registration_motion_rows,
-		replayed_observed_sample_registration_mean_abs_diff_x100: telemetry
-			.observed_sample_registration_mean_abs_diff_x100,
-		replayed_preview_only_local_registration_result: telemetry
-			.preview_only_local_registration_result,
-		replayed_preview_only_local_registration_reason: telemetry
-			.preview_only_local_registration_reason,
-		replayed_preview_only_local_registration_motion_rows: telemetry
-			.preview_only_local_registration_motion_rows,
-		replayed_preview_only_local_registration_mean_abs_diff_x100: telemetry
-			.preview_only_local_registration_mean_abs_diff_x100,
-		replayed_downward_viewport_candidate_count: telemetry
-			.last_downward_viewport_candidate_count,
-		replayed_downward_viewport_candidates_before_prune: telemetry
-			.last_downward_viewport_candidates_before_prune
-			.clone(),
-		replayed_downward_viewport_candidates_after_prune: telemetry
-			.last_downward_viewport_candidates_after_prune
-			.clone(),
-		replayed_sample_eval_last_motion_rows_hint: telemetry.sample_eval_last_motion_rows_hint,
-		replayed_sample_eval_transient_motion_rows_hint: telemetry
-			.sample_eval_transient_motion_rows_hint,
-		replayed_sample_eval_effective_motion_rows_hint: telemetry
-			.sample_eval_effective_motion_rows_hint,
-		replayed_sample_eval_transient_burst_search_enabled: telemetry
-			.sample_eval_transient_burst_search_enabled,
-		replayed_preview_only_local_viewport_top_y: telemetry.preview_only_local_viewport_top_y,
-		replayed_downward_motion_rows_pending: session.scroll_capture.downward_motion_rows_pending,
-		replayed_input_gesture_active: session.scroll_capture.input_gesture_active,
-		replayed_session_preview_display_mode: active_session.preview_display_mode(),
-		replayed_session_preview_hinted_motion_rows_hint: None,
-		replayed_session_preview_hinted_frame_source: None,
-		replayed_overlay_preview_motion_rows_hint: session
-			.scroll_capture
-			.last_overlay_preview_motion_rows_hint,
-		replayed_overlay_preview_provisional_motion_rows_hint: session
-			.scroll_capture
-			.last_overlay_preview_provisional_motion_rows_hint,
-		replayed_overlay_preview_existing_candidate_height: session
-			.scroll_capture
-			.last_overlay_preview_existing_candidate_height,
-		replayed_overlay_preview_existing_candidate_motion_rows_hint: session
-			.scroll_capture
-			.last_overlay_preview_existing_candidate_motion_rows_hint,
-		replayed_overlay_preview_ledger_candidate_height: session
-			.scroll_capture
-			.last_overlay_preview_ledger_candidate_height,
-		replayed_overlay_preview_ledger_candidate_motion_rows_hint: session
-			.scroll_capture
-			.last_overlay_preview_ledger_candidate_motion_rows_hint,
-		replayed_overlay_preview_retained_candidate_height: session
-			.scroll_capture
-			.last_overlay_preview_retained_candidate_height,
-		replayed_overlay_preview_retained_candidate_motion_rows_hint: session
-			.scroll_capture
-			.last_overlay_preview_retained_candidate_motion_rows_hint,
-		replayed_overlay_preview_retained_hint_matches_motion_rows: session
-			.scroll_capture
-			.last_overlay_preview_retained_hint_matches_motion_rows,
-		replayed_overlay_preview_fresh_latest_frame_can_drive: session
-			.scroll_capture
-			.last_overlay_preview_fresh_latest_frame_can_drive,
-		replayed_retained_overlay_preview_height: session
-			.scroll_capture
-			.retained_overlay_preview_image
-			.as_ref()
-			.map(RgbaImage::height),
-		replayed_retained_overlay_preview_motion_rows_hint: session
-			.scroll_capture
-			.retained_overlay_preview_motion_rows_hint,
-		replayed_overlay_preview_strong_unresolved_registration: session
-			.scroll_capture
-			.last_overlay_preview_strong_unresolved_registration,
-		replayed_overlay_preview_latest_frame_present: session
-			.scroll_capture
-			.last_overlay_preview_latest_frame_present,
-		replayed_overlay_preview_used_provisional: session
-			.scroll_capture
-			.last_overlay_preview_used_provisional,
-		recorded_estimated_downward_shift_rows,
-		semantic_issue,
-	});
-}
-
-fn update_recorded_height_jumps(
-	replay_stats: &mut ReplayStats,
-	recorded_export_height: Option<u32>,
-	recorded_preview_height: Option<u32>,
-) {
-	if let Some(recorded_export_height) = recorded_export_height {
-		if let Some(previous) = replay_stats.previous_recorded_export_height {
-			replay_stats.max_recorded_export_jump = replay_stats
-				.max_recorded_export_jump
-				.max(recorded_export_height.saturating_sub(previous));
-		}
-
-		replay_stats.previous_recorded_export_height = Some(recorded_export_height);
-	}
-	if let Some(recorded_preview_height) = recorded_preview_height {
-		if let Some(previous) = replay_stats.previous_recorded_preview_height {
-			replay_stats.max_recorded_preview_jump = replay_stats
-				.max_recorded_preview_jump
-				.max(recorded_preview_height.saturating_sub(previous));
-		}
-
-		replay_stats.previous_recorded_preview_height = Some(recorded_preview_height);
-	}
-}
-
-fn update_replayed_height_jumps(
-	replay_stats: &mut ReplayStats,
-	replayed_export_height: u32,
-	replayed_preview_height: u32,
-) {
-	if let Some(previous) = replay_stats.previous_replayed_export_height {
-		replay_stats.max_replayed_export_jump = replay_stats
-			.max_replayed_export_jump
-			.max(replayed_export_height.saturating_sub(previous));
-	}
-
-	replay_stats.previous_replayed_export_height = Some(replayed_export_height);
-
-	if let Some(previous) = replay_stats.previous_replayed_preview_height {
-		replay_stats.max_replayed_preview_jump = replay_stats
-			.max_replayed_preview_jump
-			.max(replayed_preview_height.saturating_sub(previous));
-	}
-
-	replay_stats.previous_replayed_preview_height = Some(replayed_preview_height);
-}
-
-fn update_live_frame_gap(
-	replay_stats: &mut ReplayStats,
-	frame_source: RecordedScrollCaptureReplayFrameSource,
-) -> Option<u64> {
-	match frame_source {
-		RecordedScrollCaptureReplayFrameSource::LiveStream { frame_seq } => {
-			let gap = replay_stats
-				.previous_live_frame_seq
-				.map(|previous| frame_seq.saturating_sub(previous))
-				.unwrap_or(1);
-
-			replay_stats.previous_live_frame_seq = Some(frame_seq);
-
-			Some(gap)
-		},
-		RecordedScrollCaptureReplayFrameSource::Worker { .. } => None,
-	}
 }
 
 fn estimate_recorded_downward_shift_rows(previous: &RgbaImage, current: &RgbaImage) -> Option<u32> {
