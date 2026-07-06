@@ -156,6 +156,9 @@ Key paths:
   scoring and resolution helpers for session-owned stitching decisions
 - `packages/rsnap-overlay/src/overlay/trace_recording.rs`: scroll-capture live-trace recorder and
   loader; its serializable manifest and entry schema lives under `overlay/trace_recording/model.rs`
+- `packages/rsnap-overlay/src/overlay/replay_support.rs`: recorded scroll-capture trace replay
+  orchestration; replay result schema, semantic classification, summary finalization, and per-step
+  statistics live under `overlay/replay_support/`
 
 ### `packages/rsnap-capture-core/`
 
