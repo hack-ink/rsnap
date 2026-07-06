@@ -1,6 +1,7 @@
 //! Portable frozen-overlay edit state owned by Rust.
 
 mod elements;
+mod geometry;
 
 pub use self::elements::{
 	FrozenOverlayEditArrow, FrozenOverlayEditColor, FrozenOverlayEditElement,
@@ -10,13 +11,10 @@ pub use self::elements::{
 	FrozenOverlayEditTextStyle, FrozenOverlayTextEdit,
 };
 
-use crate::text_rendering::{self, TextBounds};
+use self::geometry::{
+	ARROW_MIN_DISTANCE_POINTS, PEN_SAMPLE_MIN_DISTANCE_POINTS, RECT_MIN_SIZE_POINTS,
+};
 use rsnap_capture_core::ToolbarItemKind;
-
-const PEN_SAMPLE_MIN_DISTANCE_POINTS: f64 = 1.5;
-const ARROW_MIN_DISTANCE_POINTS: f64 = 6.0;
-const RECT_MIN_SIZE_POINTS: f64 = 6.0;
-const TEXT_HIT_PADDING_POINTS: f64 = 4.0;
 
 #[derive(Clone, Debug, PartialEq)]
 enum ActiveFrozenOverlayEdit {
@@ -148,14 +146,14 @@ impl FrozenOverlayEditSession {
 			ActiveFrozenOverlayEdit::MosaicMove { index, current_rect, drag_offset } => {
 				ActiveFrozenOverlayEdit::MosaicMove {
 					index,
-					current_rect: moved_rect(current_rect, drag_offset, point, selection),
+					current_rect: geometry::moved_rect(current_rect, drag_offset, point, selection),
 					drag_offset,
 				}
 			},
 			ActiveFrozenOverlayEdit::TextMove { index, current_annotation, drag_offset } => {
 				ActiveFrozenOverlayEdit::TextMove {
 					index,
-					current_annotation: moved_text_annotation(
+					current_annotation: geometry::moved_text_annotation(
 						current_annotation,
 						drag_offset,
 						point,
@@ -503,7 +501,7 @@ impl FrozenOverlayEditSession {
 					return Some(FrozenOverlayMoveTarget::Mosaic { index, rect: annotation.rect });
 				},
 				FrozenOverlayEditElement::Text(annotation)
-					if text_hit_bounds(annotation).contains(point) =>
+					if geometry::text_hit_bounds(annotation).contains(point) =>
 				{
 					return Some(FrozenOverlayMoveTarget::Text {
 						index,
@@ -613,7 +611,7 @@ impl FrozenOverlayEditSession {
 	fn preview_mosaic(&self) -> Option<FrozenOverlayEditMosaic> {
 		match self.active_interaction.as_ref()? {
 			ActiveFrozenOverlayEdit::Mosaic { anchor, current } => {
-				Some(FrozenOverlayEditMosaic { rect: normalized_rect(*anchor, *current) })
+				Some(FrozenOverlayEditMosaic { rect: geometry::normalized_rect(*anchor, *current) })
 			},
 			ActiveFrozenOverlayEdit::MosaicMove { current_rect, .. } => {
 				Some(FrozenOverlayEditMosaic { rect: *current_rect })
@@ -629,7 +627,7 @@ impl FrozenOverlayEditSession {
 		match self.active_interaction.as_ref()? {
 			ActiveFrozenOverlayEdit::Spotlight { anchor, current, style } => {
 				Some(FrozenOverlayEditSpotlight {
-					rect: normalized_rect(*anchor, *current),
+					rect: geometry::normalized_rect(*anchor, *current),
 					style: *style,
 				})
 			},
@@ -653,73 +651,6 @@ impl FrozenOverlayEditSession {
 			| ActiveFrozenOverlayEdit::Spotlight { .. } => None,
 		}
 	}
-}
-
-fn normalized_rect(
-	anchor: FrozenOverlayEditPoint,
-	current: FrozenOverlayEditPoint,
-) -> FrozenOverlayEditRect {
-	FrozenOverlayEditRect::new(
-		anchor.x.min(current.x),
-		anchor.y.min(current.y),
-		(current.x - anchor.x).abs(),
-		(current.y - anchor.y).abs(),
-	)
-}
-
-fn moved_rect(
-	rect: FrozenOverlayEditRect,
-	drag_offset: FrozenOverlayEditPoint,
-	point: FrozenOverlayEditPoint,
-	selection: FrozenOverlayEditRect,
-) -> FrozenOverlayEditRect {
-	let max_min_x = selection.x.max(selection.max_x() - rect.width);
-	let max_min_y = selection.y.max(selection.max_y() - rect.height);
-
-	FrozenOverlayEditRect::new(
-		(point.x - drag_offset.x).clamp(selection.x, max_min_x),
-		(point.y - drag_offset.y).clamp(selection.y, max_min_y),
-		rect.width,
-		rect.height,
-	)
-}
-
-fn moved_text_annotation(
-	annotation: FrozenOverlayEditText,
-	drag_offset: FrozenOverlayEditPoint,
-	point: FrozenOverlayEditPoint,
-	selection: FrozenOverlayEditRect,
-) -> FrozenOverlayEditText {
-	let bounds = text_bounds(&annotation);
-	let max_anchor_x = selection.x.max(selection.max_x() - bounds.width);
-	let max_anchor_y = selection.y.max(selection.max_y() - bounds.height);
-	let anchor = FrozenOverlayEditPoint::new(
-		(point.x - drag_offset.x).clamp(selection.x, max_anchor_x),
-		(point.y - drag_offset.y).clamp(selection.y, max_anchor_y),
-	);
-
-	FrozenOverlayEditText { anchor, ..annotation }
-}
-
-fn text_hit_bounds(annotation: &FrozenOverlayEditText) -> FrozenOverlayEditRect {
-	text_bounds(annotation).inset(-TEXT_HIT_PADDING_POINTS, -TEXT_HIT_PADDING_POINTS)
-}
-
-fn text_bounds(annotation: &FrozenOverlayEditText) -> FrozenOverlayEditRect {
-	let font_size = annotation.style.font_size_points.max(1.0) as f32;
-	let bounds =
-		text_rendering::measure_text_bounds(&annotation.text, font_size).unwrap_or_else(|| {
-			let width = annotation.text.chars().count().max(1) as f32 * font_size * 0.6;
-
-			TextBounds { width, height: font_size * 1.2 }
-		});
-
-	FrozenOverlayEditRect::new(
-		annotation.anchor.x,
-		annotation.anchor.y,
-		f64::from(bounds.width.ceil().max(1.0)),
-		f64::from(bounds.height.ceil().max(1.0)),
-	)
 }
 
 #[cfg(test)]
