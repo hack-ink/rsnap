@@ -721,21 +721,6 @@ impl OverlaySession {
 		}
 	}
 
-	#[cfg(target_os = "macos")]
-	fn maybe_schedule_startup_aux_window_creation(&mut self) {
-		if !self.startup_aux_window_creation_pending || self.startup_aux_window_creation_scheduled {
-			return;
-		}
-
-		let Some(waker) = self.startup_aux_window_waker.as_ref().cloned() else {
-			return;
-		};
-
-		self.startup_aux_window_creation_scheduled = true;
-
-		waker();
-	}
-
 	/// Replays a single external scroll-input delta into the active scroll-capture session.
 	pub fn handle_external_scroll_input_delta_y(
 		&mut self,
