@@ -1,11 +1,20 @@
+---
+title: "Performance Validation Runbook"
+description: "Performance Validation Runbook documentation for Rsnap."
+type: "Runbook"
+status: active
+authority: normative
+owner: hack-ink/rsnap
+last_verified: 2026-07-06
+---
 # Performance Validation Runbook
 
-Goal: Explain which repo-native command to run for deterministic replay, local performance
-benchmarks, or the remaining dedicated macOS GUI smoke, and how to save or compare local
+Goal: Explain which repo-native command to run for deterministic scroll-capture tests, local
+performance benchmarks, or the remaining dedicated macOS GUI smoke, and how to save or compare local
 baselines without confusing non-live evidence with the final live acceptance gate.
 
 Read this when: You are investigating a scroll-capture correctness or performance regression,
-refreshing local benchmark baselines, or deciding whether a change needs deterministic replay,
+refreshing local benchmark baselines, or deciding whether a change needs deterministic tests,
 deterministic benches, dedicated desktop smoke, or some combination of those surfaces.
 
 Inputs: `scripts/smoke/`; `scripts/perf/`; `docs/spec/performance.md`;
@@ -18,8 +27,8 @@ Outputs: A clear command choice for the regression class you are testing, plus a
 baseline workflow for the committed Criterion benchmark targets.
 
 Current release status: v0.2.5 exposes user-facing Scroll Capture for dragged-region Frozen
-captures in the native host. The replay and benchmark commands in this runbook still own retained
-internal scroll-capture engine validation, but they do not replace the recovery plan or a final
+captures in the native host. The deterministic test and benchmark commands in this runbook still
+own retained internal scroll-capture engine validation, but they do not replace the recovery plan or a final
 target-app acceptance run for broader release claims.
 
 ## Command selection
@@ -27,11 +36,7 @@ target-app acceptance run for broader release claims.
 Use the smallest command that matches the regression surface:
 
 - Scroll-capture correctness or stitching-behavior regressions before final live validation:
-  `scripts/smoke/replay-scroll-capture.sh`
-- Replay-harness sanity check when no user-recorded trace is available yet:
-  `scripts/smoke/replay-scroll-capture-self-check.sh`
-- Scroll-capture semantic trace analysis (first bad frame, under-consumption, overshoot):
-  `scripts/smoke/analyze-scroll-capture-trace.sh`
+  `cargo test -p rsnap-overlay scroll_capture --lib`
 - Scroll-capture or image-processing hot-path regressions:
   `cargo bench -p rsnap-overlay --bench scroll_capture -- --sample-size 10 --warm-up-time 0.1 --measurement-time 0.1`
 - Native-host live chrome regressions:
@@ -48,12 +53,10 @@ Use the smallest command that matches the regression surface:
 - Full macOS performance sweep on a logged-in desktop session:
   `scripts/perf/macos.sh`
 
-`scripts/smoke/replay-scroll-capture.sh` and
-`scripts/smoke/analyze-scroll-capture-trace.sh` force
-`scroll_capture_replay --force-worker-pairwise`, so the repo-native non-live
-entrypoints exercise the same replay mode that current macOS production uses.
-Use `scripts/smoke/replay-scroll-capture-self-check.sh` for the matching
-worker-pairwise self-check path when no recorded user trace is available.
+The legacy recorded-replay scripts have been removed with the Rust overlay runtime. Use targeted
+scroll-capture unit tests for non-live stitching semantics, `rsnap-perf` or the Criterion
+scroll-capture benchmark for repeatable hot-path timing, and native macOS smoke for live sampling,
+wheel input, and end-to-end scroll-capture behavior.
 
 ## What each high-level task does
 
@@ -79,17 +82,14 @@ worker-pairwise self-check path when no recorded user trace is available.
 For the current downward scroll-capture path, the expected verification sequence is:
 
 1. `cargo make checks`
-2. `scripts/smoke/replay-scroll-capture-self-check.sh`
-3. `scripts/smoke/replay-scroll-capture.sh` and
-   `scripts/smoke/analyze-scroll-capture-trace.sh` when a recorded trace is present
-4. any targeted deterministic `cargo test -p rsnap-overlay ...`
-5. `scripts/smoke/native-scroll-capture-macos.sh` with the default `SCROLL_DRIVER=wheel`; use
+2. `cargo test -p rsnap-overlay scroll_capture --lib`
+3. `scripts/perf/local.sh` when the change can affect scroll-capture or image-processing hot paths
+4. `scripts/smoke/native-scroll-capture-macos.sh` with the default `SCROLL_DRIVER=wheel`; use
    `SCROLL_DRIVER=notification` only when directly diagnosing background movement independent of
    HID wheel delivery
-6. for release-scope claims, one fresh release live touchpad run on a target webpage/app, ideally
-   with a newly recorded trace
+5. for release-scope claims, one fresh release live touchpad run on a target webpage/app
 
-For the current ownership map of those scripts versus replay, runtime, and
+For the current ownership map of those scripts versus deterministic, native, and
 session tests, read `docs/reference/smoke-perf-validation-surface.md`.
 
 ## Baseline workflow for local benchmarks
@@ -136,7 +136,8 @@ Dedicated macOS smoke:
   - live-to-frozen handoff timing is a one-shot latency path: use `snapshotSource`,
     `snapshotWaitMs`, `presentMs`, and `frozen_first_display_handoff` together, and do not treat a
     delayed post-latch ScreenCaptureKit frame as permission to delay the toolbar.
-- Scroll-capture correctness is now exercised by deterministic replay.
+- Scroll-capture live correctness is exercised by native scroll smoke; stitching semantics are
+  exercised by deterministic Rust tests.
 - Is meant for dedicated-host or manual validation, not a flaky shared-runner PR gate.
 
 ## Interpreting failures
@@ -144,22 +145,15 @@ Dedicated macOS smoke:
 - direct benchmark regressions from the scroll-capture target:
   compare scenario-level numbers against your saved baseline and inspect the relevant benchmark
   group before escalating to GUI smoke.
-- `scripts/smoke/replay-scroll-capture.sh` failures:
-  treat them as authoritative regressions against the latest recorded live trace in shipping
-  worker-pairwise overlay or session logic before attempting more desktop-session repro. If the
-  command reports that no trace manifests were found, that is an operator/setup failure: record a
-  fresh live trace first or rerun the example with `--trace <manifest-path>`.
-- `scripts/smoke/replay-scroll-capture-self-check.sh` failures:
-  treat them as deterministic regressions in the replay harness itself, not as evidence about the
-  latest user-recorded live trace.
-- clean replay plus trace analysis:
-  this is necessary but not sufficient for XY-185 style sign-off; the remaining risk is
-  isolated to the final fresh live touchpad run, not eliminated.
+- `cargo test -p rsnap-overlay scroll_capture --lib` failures:
+  treat them as deterministic regressions in retained stitching, overlap proof, or fail-closed
+  scroll-session semantics before attempting more desktop-session repro.
 - `scripts/perf/self-check-macos.sh` failures:
   treat these first as environment or permission readiness failures unless local benches also
   regressed.
 - `scripts/perf/macos.sh` failures with healthy local benches:
-  suspect live overlay cadence, desktop-session conditions, or smoke-harness environment drift.
+  suspect native live chrome cadence, desktop-session conditions, or smoke-harness environment
+  drift.
 - `scripts/smoke/native-visual-contract-macos.sh` failures:
   treat them as native-host visual or behavior contract regressions. The smoke runs Liquid Glass and
   Classic Glass cases, screenshots Rsnap's own frozen overlay, and verifies frozen handoff timing,

@@ -1,3 +1,12 @@
+---
+title: "Window Hit-Testing Reference"
+description: "Window Hit-Testing Reference documentation for Rsnap."
+type: "Reference"
+status: active
+authority: normative
+owner: hack-ink/rsnap
+last_verified: 2026-07-06
+---
 # Window Hit-Testing Reference
 
 Purpose: Describe the current live-mode window hit-testing strategy and the default choice used by

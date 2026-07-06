@@ -1,3 +1,12 @@
+---
+title: "Rsnap Performance Contract"
+description: "Rsnap Performance Contract documentation for Rsnap."
+type: "Spec"
+status: active
+authority: normative
+owner: hack-ink/rsnap
+last_verified: 2026-07-06
+---
 # Rsnap Performance Contract
 
 Purpose: Define the normative performance-tracking contract for Rsnap so render cadence,
@@ -145,9 +154,12 @@ Primary metrics:
 - live sample cadence and apply latency against the fixed `120 Hz` sampling target
 
 Diagnostic signals:
-- `overlay.window_renderer_acquire_frame`
-- `overlay.event_loop_stall`
-- `overlay.live_sample_apply_latency`
+- `live_chrome.frame_tick_gap`
+- `live_chrome.layer_render_duration`
+- `live_chrome.layer_chrome_render_duration`
+- `live_chrome.layer_chrome_render_gap`
+- `live_chrome.active_layer_chrome_render_gap`
+- `live_chrome.sample_refresh_gap`
 - `Slow operation detected` entries for redraw-related operations
 
 Current coarse smoke surface:
@@ -261,16 +273,12 @@ Passing one environment class does not automatically satisfy the other.
 
 ## Current runtime signals and their meaning
 
-The current overlay runtime already exposes several useful diagnostic thresholds:
+The native host and retained Rust transition helpers expose several useful diagnostic signals:
 
-- `LIVE_PRESENT_INTERVAL_MIN = 8.33 ms` for the maximum `120 Hz` target present interval.
-- `SLOW_OP_WARN_RENDER = 24 ms` for coarse render warnings.
-- `OVERLAY_EVENT_LOOP_STALL_THRESHOLD = 250 ms` for severe event-loop stalls.
-- `overlay.live_sample_apply_latency` is logged once latency reaches `12 ms`.
-- Native-host `live_chrome.hud.apply_latency`, `live_chrome.loupe.apply_latency`,
-  `live_chrome.hud.window_update_duration`, `live_chrome.loupe.window_update_duration`, and
-  `live_chrome.update_duration` report external frozen-toolbar/window update paths when those
-  paths are active; live HUD/loupe position should not depend on moving external windows.
+- Native-host `live_chrome.pointer_event_gap` reports incoming pointer-event cadence while live
+  capture is active.
+- Native-host `live_chrome.input_summary` reports delivered mouse events and follow-path update
+  counts for HUD/loupe smoke interpretation.
 - Native-host `live_chrome.frame_tick_gap` reports the active live-frame clock interval. It should
   cluster around the display-bound target budget during live capture.
 - Native-host `live_chrome.layer_render_duration` reports the in-overlay CALayer presentation path
@@ -332,7 +340,7 @@ The Rsnap performance-tracking project should maintain all of the following:
 - one normative spec for cadence, scenarios, metrics, and known gaps
 - one or more direct benchmark surfaces for render-heavy components
 - deterministic non-GUI benchmark coverage for scroll-capture hot paths
-- structured runtime timing for overlay redraw localization
+- structured runtime timing for native-host redraw localization and retained Rust transition helpers
 - coarse GUI smoke gates for gross regression detection
 
 No single artifact type is sufficient on its own.

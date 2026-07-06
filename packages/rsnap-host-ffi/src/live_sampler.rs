@@ -7,6 +7,7 @@ use crate::abi::{
 	RsnapOwnedRgbaRegion, RsnapPixelRect, RsnapPoint, RsnapRect, RsnapRgb, RsnapRgbaRegion,
 	RsnapStatus,
 };
+use rsnap_capture_core::{GlobalPoint, MonitorRect};
 use rsnap_overlay::host_live_sampling_macos::HostMacLiveSampler;
 
 /// Creates a new opaque live-sampler handle for the native host.
@@ -531,14 +532,14 @@ unsafe fn handle_mut<'a>(
 	unsafe { handle.as_mut() }
 }
 
-fn decode_overlay_point(point: RsnapPoint) -> rsnap_overlay::session::GlobalPoint {
-	rsnap_overlay::session::GlobalPoint::new(point.x, point.y)
+fn decode_overlay_point(point: RsnapPoint) -> GlobalPoint {
+	GlobalPoint::new(point.x, point.y)
 }
 
-fn decode_overlay_monitor(monitor: RsnapMonitorRect) -> rsnap_overlay::session::MonitorRect {
-	rsnap_overlay::session::MonitorRect {
+fn decode_overlay_monitor(monitor: RsnapMonitorRect) -> MonitorRect {
+	MonitorRect {
 		id: monitor.id,
-		origin: rsnap_overlay::session::GlobalPoint::new(monitor.origin.x, monitor.origin.y),
+		origin: GlobalPoint::new(monitor.origin.x, monitor.origin.y),
 		width: monitor.width,
 		height: monitor.height,
 		scale_factor_x1000: monitor.scale_factor_x1000,

@@ -1,3 +1,12 @@
+---
+title: "Native Host / Rust Core Reset"
+description: "Native Host / Rust Core Reset documentation for Rsnap."
+type: "Decision"
+status: active
+authority: normative
+owner: hack-ink/rsnap
+last_verified: 2026-07-06
+---
 # Native Host / Rust Core Reset
 
 Status: accepted
@@ -33,7 +42,7 @@ Decision:
   - display-authority versus export-authority semantics
   - annotation state and export composition
   - scroll-capture overlap proof and stitching
-  - deterministic replay and product-level verification logic
+  - deterministic product-level verification logic
 - Host and core must communicate through an explicit protocol rather than by sharing authority over
   OS-facing behavior.
 - Historical shell-specific documents remain as historical context only and are no longer the

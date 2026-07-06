@@ -1,3 +1,12 @@
+---
+title: "Scroll-Capture Recovery Plan"
+description: "Scroll-Capture Recovery Plan documentation for Rsnap."
+type: "Runbook"
+status: active
+authority: normative
+owner: hack-ink/rsnap
+last_verified: 2026-07-06
+---
 # Scroll-Capture Recovery Plan
 
 Goal: Keep macOS Scroll Capture product-quality without repeating the old patch loop where
@@ -42,7 +51,7 @@ The original failure symptoms this plan guards against are:
 ## Prior-Art Anchors
 
 Authoritative prior-art analysis lives in `docs/decisions/scroll-capture-architecture.md` and the
-machine-readable run at `docs/research/scroll-capture-prior-art-2026-05-10.json`.
+research contract at `docs/research/scroll-capture-prior-art-2026-05-10.md`.
 
 Procedural takeaways:
 

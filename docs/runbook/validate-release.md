@@ -1,3 +1,12 @@
+---
+title: "Validate Release"
+description: "Validate Release documentation for Rsnap."
+type: "Runbook"
+status: active
+authority: normative
+owner: hack-ink/rsnap
+last_verified: 2026-07-06
+---
 # Validate Release
 
 Goal: Execute the final release-candidate checks before publishing a tagged Rsnap release.
@@ -38,8 +47,8 @@ manual first-run/user-flow validation.
 4. Confirm dedicated desktop validation:
    - `scripts/smoke/macos.sh`
    - `scripts/perf/macos.sh`
-   - If scroll-capture correctness changed, follow the recorded-trace flow in
-     `docs/runbook/performance-validation.md`.
+   - If scroll-capture correctness changed, follow the deterministic test, perf, and native-smoke
+     sequence in `docs/runbook/performance-validation.md`.
 
 ## Manual RC Smoke
 

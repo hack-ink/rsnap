@@ -1,3 +1,12 @@
+---
+title: "Rsnap App Identity Contract"
+description: "Rsnap App Identity Contract documentation for Rsnap."
+type: "Spec"
+status: active
+authority: normative
+owner: hack-ink/rsnap
+last_verified: 2026-07-06
+---
 # Rsnap App Identity Contract
 
 Purpose: Define the product display name, macOS app bundle name, and allowed stable technical

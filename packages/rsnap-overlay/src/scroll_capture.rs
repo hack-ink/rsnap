@@ -1,3 +1,8 @@
+#![allow(
+	dead_code,
+	reason = "Scroll-capture telemetry accessors are still exercised by deterministic tests, native-host FFI callers, and benchmarks while this transition crate is narrowed."
+)]
+
 pub mod bench_support;
 
 mod downward_candidates;
@@ -21,9 +26,8 @@ mod upward_input;
 mod worker_pairwise;
 
 pub(crate) use self::fingerprint::ScrollFrameFingerprint;
-pub(crate) use self::image_stack::compose_provisional_preview_image;
 pub(crate) use self::support::scroll_capture_fingerprint;
-#[cfg(any(test, target_os = "macos"))]
+#[cfg(test)]
 pub(crate) use self::support::scroll_capture_fingerprint_delta;
 #[cfg(test)]
 pub(crate) use self::types::OverlapMatch;
