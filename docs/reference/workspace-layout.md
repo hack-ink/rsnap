@@ -118,6 +118,8 @@ Key paths:
   `overlay/session_state/frozen_annotation.rs`, frozen capture/export lifecycle state lives under
   `overlay/session_state/frozen_capture.rs`, and scroll-capture session state lives under
   `overlay/session_state/scroll_capture.rs`
+- `packages/rsnap-overlay/src/frozen_edit.rs`: Rust-owned frozen overlay edit session state machine;
+  edit geometry, text hit bounds, and movement clamping live under `frozen_edit/geometry.rs`
 - `packages/rsnap-overlay/src/overlay/frozen_brush_runtime.rs`: Frozen pen interaction routing
   for `OverlaySession`; the brush sampling, response, smoothing, preview, and rendered point model
   lives under `overlay/frozen_brush_model.rs`
