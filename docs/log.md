@@ -20,6 +20,11 @@
   `Alt+Shift+X` / macOS `Option-Shift-X`.
 - Recorded quick screenshot Settings ownership, status-menu validation, and event-tap failure
   expectations.
+- Recorded the follow-up frozen selection-transform performance constraints: drag delivery keeps
+  hover and drag queues separate, drag cancels queued hover work, unchanged transform samples do not
+  refresh the overlay, active toolbar translation reuses existing Liquid Glass/content views without
+  synchronous redraw, and transform invalidation remains window-local without adding cross-screen
+  selection movement.
 
 ## 2026-07-06
 
