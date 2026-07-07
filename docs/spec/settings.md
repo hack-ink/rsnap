@@ -5,7 +5,7 @@ type: "Spec"
 status: active
 authority: normative
 owner: hack-ink/rsnap
-last_verified: 2026-07-06
+last_verified: 2026-07-07
 ---
 # Settings and App Shell Contract
 
@@ -47,8 +47,8 @@ Defines:
 
 ## Status Menu
 
-- The status menu must expose New Screenshot, Open Screenshots Folder, Check for Updates, Settings,
-  and Quit.
+- The status menu must expose New Screenshot, Quick Screenshot, Open Screenshots Folder,
+  Check for Updates, Settings, and Quit.
 - Open Screenshots Folder must open the configured output directory, creating it first when needed.
 - Check for Updates must invoke the same Sparkle-backed update check flow as the About section.
 - The status menu must not expose Cancel Capture. Capture cancellation is handled in-session by
@@ -56,6 +56,7 @@ Defines:
 - The status menu must not expose Permissions as a separate menu item. Permission status and
   recovery live in Settings.
 - New Screenshot must use the same configured shortcut as the global capture hotkey.
+- Quick Screenshot must use the same configured shortcut as the quick screenshot hotkey.
 
 ## Settings Window
 
@@ -69,17 +70,20 @@ Defines:
 
 ## Shortcut Settings
 
-- The capture shortcut configuration must be present in Settings.
-- Shortcut display strings must use canonical platform names such as `Option-X`.
+- The capture shortcut and quick screenshot shortcut configuration must be present in Settings.
+- Shortcut display strings must use canonical platform names such as `Option-X` and
+  `Option-Shift-X`.
 - Raw event spellings such as `alt+KeyX` must not appear in user-facing shortcut fields,
   summaries, or menu shortcut labels.
 - The default capture shortcut is `Option-X`.
+- The default quick screenshot shortcut is `Option-Shift-X`.
 - In live capture, plain `Tab` toggles the loupe on and off. Hold-to-show Tab behavior is not a
   supported setting.
 
 ## Default Configuration
 
 - Capture shortcut: `Option-X`.
+- Quick screenshot shortcut: `Option-Shift-X`.
 - Open at Login: off, until the user enables the macOS Login Items registration.
 - Output directory: `~/Desktop`.
 - Output filename prefix: `Rsnap`.
@@ -127,6 +131,10 @@ Defines:
 - Settings must not present Accessibility or Input Monitoring as required for Scroll Capture; the
   current product path uses overlay-local wheel forwarding rather than Accessibility target control
   or a CGEvent tap.
+- Quick Screenshot may use a platform event tap for no-focus shortcut and selection input. If the
+  platform refuses that event tap, Quick Screenshot must fail closed and emit diagnostic telemetry;
+  Settings must not present event-tap access as a required capture permission unless a dedicated
+  recovery flow exists.
 - The Open at Login control must live at the bottom of the Permissions section so OS-owned app
   access controls remain first.
 - When Screen Recording is missing at launch or at capture start, Rsnap must open the macOS Screen

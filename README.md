@@ -20,7 +20,9 @@ https://github.com/user-attachments/assets/ff2fe84f-f551-40e8-919c-66ae8a61f8e7
 ## Feature Highlights
 
 - Menubar-only app (no Dock icon) on macOS.
-- Global hotkey: `Alt+X` (macOS: Option+X).
+- Global hotkey: `Alt+X` (macOS: Option-X).
+- Quick screenshot hotkey: `Alt+Shift+X` (macOS: Option-Shift-X) for transient UI
+  such as context menus and submenu stacks.
 - Transparent capture-session overlay that blocks desktop interaction.
 - HUD near the cursor showing global `x,y` and `rgb(r,g,b)`.
 - Left click + drag freezes a selected region; a single left click freezes the hovered window or falls back to the active monitor fullscreen.
@@ -131,6 +133,10 @@ Rsnap requires **Screen Recording** permission to capture other apps/windows.
   wheel forwarding; it does not require Accessibility, Input Monitoring, Accessibility target
   acquisition, app scripting, or browser/DOM access. The v0.2.5 native-host release exposes Scroll
   Capture from dragged-region Frozen captures only.
+- Quick Screenshot uses a temporary macOS event tap to keep transient target UI focused while Rsnap
+  captures the selected region. If macOS refuses the event tap, Quick Screenshot fails closed and
+  records native-host telemetry; Screen Recording remains the required permission for captured
+  pixels.
 - macOS may describe Screen Recording as `Screen & System Audio Recording` or as direct screen/audio access when Rsnap bypasses the system picker.
 - Settings -> Permissions shows Screen Recording as the required capture permission.
 - Normal native capture depends on Screen Recording; if access is missing, Rsnap opens the Screen Recording page in System Settings and shows a floating drag-to-grant guide.
@@ -138,9 +144,21 @@ Rsnap requires **Screen Recording** permission to capture other apps/windows.
 - Base capture path: `System Settings` -> `Privacy & Security` -> `Screen Recording`.
 - Enable `Rsnap.app`, then retry capture. If macOS still keeps capture blocked after changing a permission, relaunch the app.
 
+### Screenshot shortcuts
+
+- New Screenshot: `Alt+X` (macOS: Option-X). Use this for the normal live capture overlay.
+- Quick Screenshot: `Alt+Shift+X` (macOS: Option-Shift-X). Use this for transient UI that
+  would disappear when another app activates, such as context menus and submenu stacks.
+- In live capture, `Tab` toggles the loupe sample.
+- In Frozen mode, `Space` copies the current frozen PNG to the clipboard and exits.
+- In Frozen mode, Cmd+S (macOS) / Ctrl+S saves the current PNG to disk and exits.
+- `Esc` cancels capture.
+
 ### HUD settings behavior
 
 - The native `Settings…` window currently owns:
+  - New Screenshot shortcut
+  - Quick Screenshot shortcut
   - HUD glass enable/disable
   - HUD glass style (`Classic Glass` / `Liquid Glass`)
   - Liquid Glass style (`Regular` / `Clear`) when supported by macOS and the current build

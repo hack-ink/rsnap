@@ -16,6 +16,10 @@
 - Recorded frozen selection-transform performance ownership: drag updates are coalesced through
   the capture-host pointer dispatch queue and active transform redraws are narrowed to dirty
   regions.
+- Added user-facing and release-validation documentation for the default quick screenshot shortcut:
+  `Alt+Shift+X` / macOS `Option-Shift-X`.
+- Recorded quick screenshot Settings ownership, status-menu validation, and event-tap failure
+  expectations.
 
 ## 2026-07-06
 

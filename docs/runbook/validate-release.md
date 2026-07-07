@@ -5,7 +5,7 @@ type: "Runbook"
 status: active
 authority: normative
 owner: hack-ink/rsnap
-last_verified: 2026-07-06
+last_verified: 2026-07-07
 ---
 # Validate Release
 
@@ -63,6 +63,13 @@ Validate these user-visible flows:
 - First launch and missing Screen Recording recovery.
 - Menubar app identity, no Dock icon during capture, Settings open/close behavior.
 - Option-X capture start, cancel, and frontmost-app restoration.
+- Option-Shift-X quick screenshot start, transient-menu preservation, dragged-region freeze,
+  cancel, and frontmost-app restoration.
+- Status menu exposes Quick Screenshot and shows the configured quick screenshot shortcut. Settings
+  -> Capture shows canonical `Option-X` and `Option-Shift-X` shortcut values; changing the Quick
+  Screenshot shortcut persists, updates the status-menu item, and still starts quick screenshot
+  without activating Rsnap. If event-tap setup fails, collect native-host telemetry and treat it as
+  a quick screenshot blocker.
 - Live HUD, Tab loupe sampling, window outline, dragged-region freeze, click-window freeze, and
   fullscreen fallback.
 - Frozen toolbar tools: pointer, pen, arrow, text, mosaic, spotlight, undo, redo, auto-center,
