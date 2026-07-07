@@ -1,5 +1,19 @@
 # Documentation Log
 
+## 2026-07-07
+
+- Documented the quick screenshot no-focus contract: quick screenshot must preserve transient target
+  UI such as context menus by avoiding overlay activation, key-window promotion, and
+  first-responder ownership while keeping acquisition overlays mouse-transparent.
+- Recorded the host-side split between ordinary capture cursor ownership through focused AppKit
+  overlay views and quick screenshot cursor/input ownership through non-activating acquisition.
+- Recorded that ordinary and quick screenshot paths keep the native cursor visible and use a
+  small Rsnap-owned cursor-hotspot accent overlay as screenshot-mode feedback.
+- Recorded `CapturePointerAccentLayer.swift` as the shared visual owner for ordinary and quick
+  screenshot pointer hotspot accent chrome.
+- Added `CaptureHostCursorOwner.swift` and `QuickScreenshotController.swift` ownership notes to the
+  workspace layout reference.
+
 ## 2026-07-06
 
 - Removed the final active `rsnap-overlay` ownership references after macOS ordered live sampling

@@ -54,6 +54,7 @@ final class CaptureOverlayController {
 		prepareCaptureStreams: (() -> Void)? = nil
 	) {
 		close()
+		NSApp.activate(ignoringOtherApps: true)
 		var targetWindow: CaptureOverlayWindow?
 		for screen in NSScreen.screens {
 			let window = CaptureOverlayWindow(
@@ -120,6 +121,7 @@ final class CaptureOverlayController {
 		focusPoint: CGPoint
 	) {
 		close()
+		NSApp.activate(ignoringOtherApps: true)
 		var targetWindow: CaptureOverlayWindow?
 		for screen in NSScreen.screens {
 			let window = CaptureOverlayWindow(
@@ -264,6 +266,7 @@ final class CaptureOverlayController {
 		}
 
 		targetWindow.orderFrontRegardless()
+		NSApp.activate(ignoringOtherApps: true)
 		targetWindow.makeKey()
 		targetWindow.makeFirstResponder(targetWindow.hostView)
 		focusedWindowNumber = targetWindow.windowNumber

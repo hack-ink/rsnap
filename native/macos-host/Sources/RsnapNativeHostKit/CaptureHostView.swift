@@ -28,8 +28,7 @@ final class CaptureHostView: NSView {
 	private var trackingAreaRef: NSTrackingArea?
 	var annotationStyleWheelGate = CaptureHostAnnotationStyleWheelGate()
 	var lastCursorPresentation: CaptureHostCursorPresentation?
-	var lastAppliedCursorPresentation: CaptureHostCursorPresentation?
-	var pushedCursorPresentation: CaptureHostCursorPresentation?
+	let cursorOwner = CaptureHostCursorOwner()
 	var livePrimaryInteraction = CaptureHostLivePrimaryInteractionState()
 	let mouseReleaseRecovery = CaptureHostMouseReleaseRecovery()
 	let livePointerPreview = CaptureHostLivePointerPreviewState()
