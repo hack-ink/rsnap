@@ -29,7 +29,7 @@ struct AppearanceSettingsPanel: View {
 					subtitle: materialSubtitle
 				) {
 					HudGlassModePicker(
-						selection: model.settings.resolvedHudGlassMode,
+						selection: model.settings.hudGlassMode,
 						isEnabled: model.settings.hudGlassEnabled,
 						onSelect: updateGlassMode
 					)
@@ -106,7 +106,7 @@ struct AppearanceSettingsPanel: View {
 		}
 		.animation(
 			.spring(response: 0.26, dampingFraction: 0.86),
-			value: model.settings.resolvedHudGlassMode
+			value: model.settings.hudGlassMode
 		)
 	}
 
@@ -140,10 +140,6 @@ struct AppearanceSettingsPanel: View {
 	}
 
 	private func updateGlassMode(_ mode: HudGlassModePreference) {
-		if mode == .liquidGlass, !LiveChromeGlassMaterialSupport.isLiquidGlassAvailable {
-			model.refresh()
-			return
-		}
 		model.update { $0.hudGlassMode = mode }
 	}
 }
@@ -173,21 +169,26 @@ private struct HudGlassModePicker: View {
 	var body: some View {
 		HStack(spacing: 8) {
 			ForEach(HudGlassModePreference.allCases, id: \.rawValue) { mode in
-				let available =
-					mode != .liquidGlass || LiveChromeGlassMaterialSupport.isLiquidGlassAvailable
 				ModernSegmentButton(
 					title: mode.title,
 					isSelected: selection == mode,
-					isEnabled: isEnabled && available
+					isEnabled: isEnabled
 				) {
 					onSelect(mode)
 				}
-				.help(available ? mode.title : LiveChromeGlassMaterialSupport.unavailableHelpText)
+				.help(helpText(for: mode))
 			}
 		}
 		.padding(.horizontal, 1)
 		.frame(width: SettingsControlLayout.controlColumnWidth)
 		.segmentedGlassBackground()
+	}
+
+	private func helpText(for mode: HudGlassModePreference) -> String {
+		if mode == .liquidGlass, !LiveChromeGlassMaterialSupport.isLiquidGlassAvailable {
+			return LiveChromeGlassMaterialSupport.unavailableHelpText
+		}
+		return mode.title
 	}
 }
 
