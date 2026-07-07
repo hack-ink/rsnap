@@ -72,6 +72,8 @@ product level rather than binding itself to a particular window toolkit or shell
 ## Live mode
 
 - Live mode presents a capture surface for the monitor under the cursor.
+- Live mode uses a crosshair cursor immediately after capture activation so users can tell the
+  screenshot surface is active before they freeze a selection.
 - Live mode shows a HUD near the cursor with:
   - global cursor coordinates `x,y`
   - pixel color `rgb(r,g,b)` under the cursor

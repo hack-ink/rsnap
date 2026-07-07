@@ -163,6 +163,11 @@ extension CaptureHostView {
 
 	func syncVisibleCursor() {
 		let cursorPresentation = currentCursorPresentation()
+		guard window?.isKeyWindow == true else {
+			clearVisibleCursorOverride()
+			lastCursorPresentation = cursorPresentation
+			return
+		}
 		guard cursorPresentation != lastCursorPresentation else {
 			return
 		}
@@ -315,8 +320,26 @@ extension CaptureHostView {
 		guard cursorPresentation != lastAppliedCursorPresentation else {
 			return
 		}
+		clearVisibleCursorOverride()
 		lastAppliedCursorPresentation = cursorPresentation
-		CaptureHostCursorSupport.cursor(for: cursorPresentation).set()
+		CaptureHostCursorSupport.cursor(for: cursorPresentation).push()
+		pushedCursorPresentation = cursorPresentation
+	}
+
+	func forceVisibleCursorRefresh() {
+		lastCursorPresentation = nil
+		lastAppliedCursorPresentation = nil
+		clearVisibleCursorOverride()
+		syncVisibleCursor()
+	}
+
+	func clearVisibleCursorOverride() {
+		guard pushedCursorPresentation != nil else {
+			return
+		}
+		NSCursor.pop()
+		pushedCursorPresentation = nil
+		lastAppliedCursorPresentation = nil
 	}
 
 	private func suppressLiveHoverChrome() {
