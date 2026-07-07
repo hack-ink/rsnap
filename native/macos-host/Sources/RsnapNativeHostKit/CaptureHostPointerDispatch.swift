@@ -9,12 +9,13 @@ package enum CaptureHostPointerDispatchTrack: Equatable {
 package enum CaptureHostPointerDispatchEvent: Equatable {
 	case moved(CGPoint)
 	case liveDragged(CGPoint)
+	case frozenSelectionDragged(CGPoint)
 
 	package var track: CaptureHostPointerDispatchTrack {
 		switch self {
 		case .moved:
 			return .hover
-		case .liveDragged:
+		case .liveDragged, .frozenSelectionDragged:
 			return .drag
 		}
 	}

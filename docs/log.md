@@ -13,6 +13,9 @@
   screenshot pointer hotspot accent chrome.
 - Added `CaptureHostCursorOwner.swift` and `QuickScreenshotController.swift` ownership notes to the
   workspace layout reference.
+- Recorded frozen selection-transform performance ownership: drag updates are coalesced through
+  the capture-host pointer dispatch queue and active transform redraws are narrowed to dirty
+  regions.
 
 ## 2026-07-06
 

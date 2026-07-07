@@ -182,6 +182,7 @@ enum RsnapNativeHostKitProbe {
 		guard
 			CaptureHostPointerDispatchEvent.moved(.zero).track == .hover,
 			CaptureHostPointerDispatchEvent.liveDragged(.zero).track == .drag,
+			CaptureHostPointerDispatchEvent.frozenSelectionDragged(.zero).track == .drag,
 			approximatelyEqual(
 				CaptureHostPointerDispatchTiming.delay(
 					now: 10,

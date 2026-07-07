@@ -34,7 +34,7 @@ extension CaptureHostView {
 	}
 
 	func routeMouseDragged(with event: NSEvent) {
-		if scene.mode == .frozen {
+		if scene.mode == .frozen, chrome.frozenSelectionInteraction == nil {
 			frozenToolbar.refreshHoveredAction(for: event.locationInWindow)
 		}
 
@@ -56,6 +56,11 @@ extension CaptureHostView {
 		} else {
 			let point = globalPoint(from: event)
 			if recoverReleasedFrozenInteractionIfNeeded(at: point) {
+				return
+			}
+			if chrome.frozenSelectionInteraction != nil {
+				queuePointerEvent(.frozenSelectionDragged(point))
+				syncVisibleCursor()
 				return
 			}
 			controller?.continueFrozenInteraction(to: point)
@@ -129,6 +134,7 @@ extension CaptureHostView {
 			controller?.completeLivePrimaryInteraction(from: self, at: point)
 		} else if scene.mode == .frozen {
 			cancelFrozenMouseReleaseWatchdog()
+			cancelQueuedPointerDispatch()
 			controller?.completeFrozenInteraction(at: point)
 			syncVisibleCursor()
 		}
@@ -356,6 +362,11 @@ extension CaptureHostView {
 				return
 			}
 			controller?.continuePrimaryInteraction(to: point)
+		case .frozenSelectionDragged(let point):
+			if recoverReleasedFrozenInteractionIfNeeded(at: point) {
+				return
+			}
+			controller?.continueFrozenInteraction(to: point)
 		}
 	}
 }
