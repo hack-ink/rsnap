@@ -102,6 +102,14 @@ final class CaptureHostView: NSView {
 		let previousSettings = self.settings
 		let previousMode = self.scene.mode
 		let transitioningToFrozen = previousMode == .live && scene.mode == .frozen
+		let frozenTransformDirtyRect = frozenSelectionTransformDirtyRect(
+			previousScene: previousScene,
+			previousChrome: previousChrome,
+			previousSettings: previousSettings,
+			nextScene: scene,
+			nextChrome: chrome,
+			nextSettings: settings
+		)
 		let hostLocalFrozenSelectingEnded =
 			previousChrome.hostLocalFrozenSelecting && !chrome.hostLocalFrozenSelecting
 		if scene.mode != .frozen {
@@ -153,7 +161,9 @@ final class CaptureHostView: NSView {
 					now: ProcessInfo.processInfo.systemUptime)
 			}
 		}
-		frozenToolbar.refreshHoveredAction()
+		if chrome.frozenSelectionInteraction == nil {
+			frozenToolbar.refreshHoveredAction()
+		}
 		syncVisibleCursor()
 		updateChromeMaterialViews()
 		updateLiveRendererState()
@@ -178,9 +188,93 @@ final class CaptureHostView: NSView {
 				if previousMode == .live {
 					stopLivePresentationNow()
 				}
-				needsDisplay = true
+				if let frozenTransformDirtyRect {
+					setNeedsDisplay(frozenTransformDirtyRect)
+				} else {
+					needsDisplay = true
+				}
 			}
 		}
+	}
+
+	private func frozenSelectionTransformDirtyRect(
+		previousScene: SceneSnapshot,
+		previousChrome: CaptureChromeState,
+		previousSettings: NativeHostSettings,
+		nextScene: SceneSnapshot,
+		nextChrome: CaptureChromeState,
+		nextSettings: NativeHostSettings
+	) -> CGRect? {
+		guard previousScene.mode == .frozen, nextScene.mode == .frozen else {
+			return nil
+		}
+		guard previousSettings == nextSettings else {
+			return nil
+		}
+		guard
+			previousChrome.frozenSelectionInteraction != nil
+				|| nextChrome.frozenSelectionInteraction != nil
+		else {
+			return nil
+		}
+		guard previousChrome.frozenDisplayFrame == nextChrome.frozenDisplayFrame else {
+			return nil
+		}
+		guard
+			let previousSelection = localRect(
+				from: previousChrome.frozenSelectionSnapshot ?? previousScene.frozenSelection),
+			let nextSelection = localRect(
+				from: nextChrome.frozenSelectionSnapshot ?? nextScene.frozenSelection)
+		else {
+			return nil
+		}
+
+		var dirtyRect = previousSelection.union(nextSelection)
+		if let previousToolbarFrame = frozenToolbarFrame(
+			for: previousSelection,
+			scene: previousScene,
+			chrome: previousChrome,
+			settings: previousSettings
+		) {
+			dirtyRect = dirtyRect.union(previousToolbarFrame)
+		}
+		if let nextToolbarFrame = frozenToolbarFrame(
+			for: nextSelection,
+			scene: nextScene,
+			chrome: nextChrome,
+			settings: nextSettings
+		) {
+			dirtyRect = dirtyRect.union(nextToolbarFrame)
+		}
+		let clippedDirtyRect = dirtyRect.insetBy(dx: -96, dy: -96).intersection(bounds)
+		return clippedDirtyRect.isNull ? nil : clippedDirtyRect
+	}
+
+	private func frozenToolbarFrame(
+		for selection: CGRect,
+		scene: SceneSnapshot,
+		chrome: CaptureChromeState,
+		settings: NativeHostSettings
+	) -> CGRect? {
+		FrozenToolbarLayoutPlanner.layout(
+			selection: selection,
+			bounds: bounds,
+			prefersTopPlacement: settings.toolbarPlacement == .top,
+			items: FrozenToolbarLayoutPlanner.visibleItems(
+				from: scene.toolbarItems,
+				availability: FrozenToolbarAvailability(
+					scrollCaptureActive: chrome.scrollMinimapPreview != nil,
+					canUndo: chrome.frozenOverlay.canUndo,
+					canRedo: chrome.frozenOverlay.canRedo,
+					frozenSelectionAvailable: scene.frozenSelection != nil,
+					keepsFrozenSelectionFixed: chrome.frozenOverlay.keepsFrozenSelectionFixed,
+					scrollToolbarEnabled: controller?.scrollCaptureToolbarEnabled ?? false,
+					hasRecognizeTextBlockingEdits: chrome.frozenOverlay
+						.hasRecognizeTextBlockingEdits
+				)
+			),
+			annotationStyle: chrome.annotationStyle
+		)?.frame
 	}
 
 	private func shouldRenderFullLiveOverlay(
