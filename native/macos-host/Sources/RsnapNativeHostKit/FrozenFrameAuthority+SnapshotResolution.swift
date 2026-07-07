@@ -1,8 +1,49 @@
 import CoreGraphics
 import Foundation
 import RsnapHostBridge
+import ScreenCaptureKit
 
 extension FrozenFrameAuthority {
+	private struct ScreenshotSnapshotRequest: @unchecked Sendable {
+		let displayID: CGDirectDisplayID
+		let displayFrame: CGRect
+		let generation: UInt64
+		let selfCaptureFilterComplete: Bool
+		let filter: SCContentFilter
+		let configuration: SCStreamConfiguration
+	}
+
+	private final class ScreenshotSnapshotResult: @unchecked Sendable {
+		private let condition = NSCondition()
+		private var completed = false
+		private var image: CGImage?
+		private var error: Error?
+		private var capturedAtUptime = ProcessInfo.processInfo.systemUptime
+
+		func complete(image: CGImage?, error: Error?) {
+			condition.lock()
+			self.image = image
+			self.error = error
+			capturedAtUptime = ProcessInfo.processInfo.systemUptime
+			completed = true
+			condition.signal()
+			condition.unlock()
+		}
+
+		func wait(until deadline: Date) -> (
+			image: CGImage?, error: Error?, capturedAtUptime: TimeInterval
+		) {
+			condition.lock()
+			while completed == false, Date() < deadline {
+				condition.wait(until: deadline)
+			}
+			let snapshot =
+				completed ? (image, error, capturedAtUptime) : (nil, nil, capturedAtUptime)
+			condition.unlock()
+			return snapshot
+		}
+	}
+
 	func latchToken(containing point: CGPoint) -> FrozenFrameLatchToken? {
 		stateLock.lock()
 		defer {
@@ -273,13 +314,140 @@ extension FrozenFrameAuthority {
 		after token: FrozenFrameLatchToken?,
 		maxWait: TimeInterval
 	) -> SnapshotResolution {
+		if hasStaleUnchangedRecord(containing: point, token: token),
+			let snapshot = screenshotManagerSnapshot(
+				containing: point,
+				maxWait: Self.screenshotManagerSnapshotWait
+			)
+		{
+			return .resolved(snapshot)
+		}
 		if let snapshot = snapshot(containing: point, after: token, maxWait: maxWait) {
+			return .resolved(snapshot)
+		}
+		if let snapshot = screenshotManagerSnapshot(
+			containing: point,
+			maxWait: Self.screenshotManagerSnapshotWait
+		) {
 			return .resolved(snapshot)
 		}
 		if needsSelfCaptureCompleteFrame(containing: point) {
 			return .pendingSelfCaptureFrame
 		}
 		return .noFreshFrame
+	}
+
+	private func hasStaleUnchangedRecord(
+		containing point: CGPoint,
+		token: FrozenFrameLatchToken?
+	) -> Bool {
+		stateLock.lock()
+		defer {
+			stateLock.unlock()
+		}
+		let displayID =
+			token?.displayID
+			?? displayTargets.first(where: { $0.value.frame.inclusivelyContains(point) })?.key
+		guard
+			let displayID,
+			let token,
+			token.minSequence > 0,
+			let record = latestFrames[displayID],
+			let eligibleRecord = snapshotEligibleRecordLocked(record),
+			eligibleRecord.generation == token.generation,
+			eligibleRecord.sequence == token.minSequence
+		else {
+			return false
+		}
+		return Self.isFreshForSnapshot(eligibleRecord) == false
+	}
+
+	private func screenshotManagerSnapshot(
+		containing point: CGPoint,
+		maxWait: TimeInterval
+	) -> FrozenFrameSnapshot? {
+		guard let request = screenshotSnapshotRequest(containing: point) else {
+			return nil
+		}
+		let deadline = Date(timeIntervalSinceNow: max(0, maxWait))
+		let result = ScreenshotSnapshotResult()
+
+		SCScreenshotManager.captureImage(
+			contentFilter: request.filter,
+			configuration: request.configuration
+		) { image, error in
+			result.complete(image: image, error: error)
+		}
+
+		let snapshotResult = result.wait(until: deadline)
+		let image = snapshotResult.image
+		let error = snapshotResult.error
+
+		if let error {
+			let telemetry = currentTelemetrySnapshot()
+			NativeHostTelemetry.frozenAuthorityWarning(
+				"frozen_authority.screenshot_snapshot_failed",
+				captureID: telemetry.captureID,
+				source: telemetry.source,
+				displayID: request.displayID,
+				error: String(describing: error)
+			)
+		}
+		guard let image else {
+			return nil
+		}
+
+		stateLock.lock()
+		guard
+			generation == request.generation,
+			activeDisplayIDs.contains(request.displayID)
+		else {
+			stateLock.unlock()
+			return nil
+		}
+		orderedFrameSequence &+= 1
+		let sequence = orderedFrameSequence
+		stateLock.unlock()
+
+		return FrozenFrameSnapshot(
+			displayID: request.displayID,
+			displayFrame: request.displayFrame,
+			image: image,
+			generation: request.generation,
+			sequence: sequence,
+			capturedAtUptime: snapshotResult.capturedAtUptime,
+			source: "screenshot_manager",
+			selfCaptureSafe: true,
+			selfCaptureFilterComplete: request.selfCaptureFilterComplete
+		)
+	}
+
+	private func screenshotSnapshotRequest(containing point: CGPoint)
+		-> ScreenshotSnapshotRequest?
+	{
+		stateLock.lock()
+		defer {
+			stateLock.unlock()
+		}
+		guard
+			let displayID = displayTargets.first(where: {
+				$0.value.frame.inclusivelyContains(point)
+			})?.key,
+			let displayStream = streams[displayID]
+		else {
+			return nil
+		}
+		if selfCaptureFilterRequired, displayStream.selfCaptureFilterComplete == false {
+			return nil
+		}
+		return ScreenshotSnapshotRequest(
+			displayID: displayID,
+			displayFrame: displayStream.displayFrame,
+			generation: generation,
+			selfCaptureFilterComplete: displayStream.selfCaptureFilterComplete,
+			filter: displayStream.filter,
+			configuration: displayStream.configuration
+		)
 	}
 
 	private func freshRecordLocked(displayID: CGDirectDisplayID, token: FrozenFrameLatchToken?)

@@ -130,9 +130,12 @@ If the chain stops at `capture_timing.freeze_commit_failed`, inspect
 frame timing. On static desktops, successful freezes may report `snapshotSource=latest_unchanged`;
 that is expected when no post-latch ScreenCaptureKit frame was emitted because the excluded overlay
 was the only thing moving.
-Fast freezes should usually report `snapshotSource=post_token`; fresh static handoffs may report
-`snapshotSource=latest_unchanged`. In both cases, check `frameAgeMs`: it must reflect the actual
-source frame age and should stay within the frozen authority freshness guard. If
+Fast freezes should usually report `snapshotSource=post_token`; static handoffs may report
+`snapshotSource=latest_unchanged` when a fresh same-sequence frame exists, or
+`snapshotSource=screenshot_manager` when the authority uses the active self-capture-safe
+ScreenCaptureKit filter to capture the current static display. In all cases, check `frameAgeMs`: it
+must reflect the actual source frame age and should stay within the frozen authority freshness
+guard for stream-derived frames. If
 `snapshotSource=live_sampler_latest`, `authority_latest`, or `window_list_below_overlay` appears in
 release-handoff telemetry, treat it as a regression. The first two sources mean the frozen handoff
 has fallen back to an obsolete cache-only/latest-frame shortcut; the last means full-monitor
