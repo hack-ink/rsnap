@@ -11,6 +11,7 @@ enum RsnapNativeHostKitProbe {
 		assertScrimExclusionPreservesExistingPixels()
 		assertRoundedExclusionMaskKeepsCornersFilled()
 		assertCaptureFrameEffectExpandsExportCanvas()
+		assertSelectionSizeTextUsesDisplayPointDimensions()
 		assertCaptureOverlayLocalPointKeepsScreenEdgesVisible()
 		assertScrollCaptureViewportPointAcceptsFlippedGlobalMouseCoordinates()
 		assertScrollCaptureObservedInputAcceptsSourceWindowGutter()
@@ -102,6 +103,19 @@ enum RsnapNativeHostKitProbe {
 				automaticallyDownloadsUpdates: true) == "install"
 		else {
 			fatalError("software update mode should treat disabled checks as off")
+		}
+	}
+
+	private static func assertSelectionSizeTextUsesDisplayPointDimensions() {
+		guard
+			SelectionSizeText.displayText(
+				for: CGRect(x: 0, y: 0, width: 3_008, height: 1_692)
+			) == "3008x1692px",
+			SelectionSizeText.displayText(
+				for: CGRect(x: 10, y: 20, width: 12.4, height: 9.6)
+			) == "12x10px"
+		else {
+			fatalError("selection size badge should report display-point dimensions")
 		}
 	}
 
