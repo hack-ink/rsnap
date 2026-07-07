@@ -600,7 +600,7 @@ private final class QuickScreenshotSelectionView: NSView {
 	private let dragBorderOutlineLayer = CAShapeLayer()
 	private let dragBorderLayer = CAShapeLayer()
 	private let selectionSizeLayer = CATextLayer()
-	private let pointerLayer = CapturePointerAccentLayer()
+	private let pointerLayer = PointerAccentLayer()
 	private var selection: CGRect?
 	private var pointer: CGPoint?
 

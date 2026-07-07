@@ -63,7 +63,7 @@ final class LiveOverlayRenderer {
 	private let loupeStrokeLayer = CAShapeLayer()
 	private let loupePatchLayer = CALayer()
 	private let loupeCenterLayer = CAShapeLayer()
-	private let pointerLayer = CapturePointerAccentLayer()
+	private let pointerLayer = PointerAccentLayer()
 	private let frameClock = LiveFrameClockDriver()
 	private let layerRenderDurationMetric = NativeHostTelemetry.distribution(
 		"live_chrome.layer_render_duration",
@@ -102,7 +102,7 @@ final class LiveOverlayRenderer {
 	private var lastRenderedFocusFlowAnimates = false
 	private var lastChromeRenderUptime: TimeInterval?
 	private var lastActiveChromeRenderUptime: TimeInterval?
-	private lazy var hudColorRollCoordinator = LiveHudColorRollCoordinator(
+	private lazy var hudColorRollCoordinator = ColorRollCoordinator(
 		hudHexLayer: hudHexLayer,
 		hudHexRollLayer: hudHexRollLayer,
 		hudSwatchLayer: hudSwatchLayer,
