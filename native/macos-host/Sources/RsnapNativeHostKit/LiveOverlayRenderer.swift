@@ -63,6 +63,7 @@ final class LiveOverlayRenderer {
 	private let loupeStrokeLayer = CAShapeLayer()
 	private let loupePatchLayer = CALayer()
 	private let loupeCenterLayer = CAShapeLayer()
+	private let pointerLayer = CapturePointerAccentLayer()
 	private let frameClock = LiveFrameClockDriver()
 	private let layerRenderDurationMetric = NativeHostTelemetry.distribution(
 		"live_chrome.layer_render_duration",
@@ -93,6 +94,7 @@ final class LiveOverlayRenderer {
 		static let selectionChrome: CGFloat = 30
 		static let selectionSize: CGFloat = 40
 		static let hudChrome: CGFloat = 1_000
+		static let pointer: CGFloat = 1_200
 	}
 
 	private var snapshotProvider: (() -> LivePreviewSnapshot?)?
@@ -219,6 +221,8 @@ final class LiveOverlayRenderer {
 			chromeLayer.zPosition = LayerZ.hudChrome
 			chromeRootLayer.addSublayer(chromeLayer)
 		}
+		pointerLayer.zPosition = LayerZ.pointer
+		chromeRootLayer.addSublayer(pointerLayer)
 		for hudSublayer in [
 			hudGlassLayer, hudFillLayer, hudStrokeLayer, hudSwatchLayer, hudPositionLayer,
 			hudHexLayer, hudHexRollLayer, hudKeycapLayer, hudKeycapTextLayer,
@@ -280,6 +284,7 @@ final class LiveOverlayRenderer {
 		lastRenderedFocusFlowAnimates = shouldAnimateSelectionFlow(snapshot)
 		renderHud(snapshot)
 		renderLoupe(snapshot)
+		renderPointer(snapshot)
 		CATransaction.commit()
 	}
 
@@ -300,6 +305,7 @@ final class LiveOverlayRenderer {
 		lastActiveChromeRenderUptime = nil
 		hudColorRollCoordinator.reset()
 		hoverFlowLayer.hide()
+		pointerLayer.hide()
 	}
 
 	private func currentSnapshot() -> LivePreviewSnapshot? {
@@ -327,6 +333,7 @@ final class LiveOverlayRenderer {
 		updateLiveFlowExclusions(excluding: chromeExclusions)
 		renderHud(snapshot)
 		renderLoupe(snapshot)
+		renderPointer(snapshot)
 		CATransaction.commit()
 	}
 
@@ -484,6 +491,15 @@ final class LiveOverlayRenderer {
 		loupeCenterLayer.fillColor = NSColor.clear.cgColor
 		loupeCenterLayer.strokeColor = NSColor.white.withAlphaComponent(0.9).cgColor
 		loupeCenterLayer.lineWidth = 2
+	}
+
+	private func renderPointer(_ snapshot: LivePreviewSnapshot) {
+		let scale = hostView?.window?.backingScaleFactor ?? 2
+		pointerLayer.update(
+			pointer: snapshot.pointerLocal,
+			in: snapshot.bounds,
+			contentsScale: scale
+		)
 	}
 
 	private func applySurfaceStyle(

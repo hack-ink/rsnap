@@ -5,7 +5,7 @@ type: "Spec"
 status: active
 authority: normative
 owner: hack-ink/rsnap
-last_verified: 2026-07-06
+last_verified: 2026-07-07
 ---
 # Platform Host Boundary
 
@@ -53,6 +53,13 @@ The native platform host owns:
 - OS resource discovery that has no portable API, such as the current desktop wallpaper path
 - clipboard, save-panel, notification, sound, and similar host-side effects
 - presenting rendered pixels returned by the core inside native windows and controls
+
+Host-owned cursor and input acquisition may differ by capture entry path as long as the product
+contract is preserved. For example, the ordinary macOS capture path may let a focused AppKit
+overlay view own cursor rects and pointer delivery, while the quick screenshot path must keep its
+overlay non-key, non-activating, and mouse-transparent so transient target UI remains visible. In
+that quick path, the native host owns event interception through a session event tap and renders
+pointer feedback through overlay layers rather than mutating the system cursor.
 
 ## Rust core ownership
 
