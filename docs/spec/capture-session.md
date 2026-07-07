@@ -48,7 +48,7 @@ product level rather than binding itself to a particular window toolkit or shell
 1. Background app shell on macOS: no Dock icon while Settings is closed and no other ordinary app
    window is visible. Opening Settings may temporarily use a normal app/window activation policy;
    closing Settings must return Rsnap to the background menubar shell.
-2. Global hotkey starts capture session (default `Alt+X`, macOS: Option+X) and can be customized
+2. Global hotkey starts capture session (default `Alt+X`, macOS: Option-X) and can be customized
    from Settings.
 3. The status menu's New Screenshot item must use the configured capture shortcut. Shortcut display
    strings must use platform-native names such as `Option-X`, not raw event names such as
@@ -68,7 +68,7 @@ product level rather than binding itself to a particular window toolkit or shell
 8. The product contract does not require any specific platform window implementation. Focus,
    cursor, keyboard, and IME correctness are mandatory outcomes, regardless of how the native host
    achieves them.
-9. The quick screenshot shortcut (default macOS: Shift-Option-X) is a separate acquisition path for
+9. The quick screenshot shortcut (default macOS: Option-Shift-X) is a separate acquisition path for
    capturing transient UI such as right-click menus and submenu stacks. Quick screenshot MUST NOT
    activate Rsnap, make an overlay key/main, take first responder, or otherwise steal focus from the
    target app while the quick selection is armed or dragged. Any quick screenshot cursor feedback
