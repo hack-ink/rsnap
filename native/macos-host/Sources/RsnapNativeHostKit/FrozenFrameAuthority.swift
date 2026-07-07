@@ -42,6 +42,7 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 	static let maximumOrderedRegionAgeMicroseconds: UInt64 = 90_000
 	static let orderedRegionAheadWaitTimeout: TimeInterval = 0.024
 	static let orderedRegionFrameHistoryCapacity = 32
+	static let screenshotManagerSnapshotWait: TimeInterval = 0.35
 	static let selfCaptureFilterRetryInterval: TimeInterval = 0.035
 	static let selfCaptureFilterRetryWindow: TimeInterval = 2.5
 
@@ -69,15 +70,24 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		let stream: SCStream
 		let output: FrozenFrameStreamOutput
 		let selfCaptureFilterComplete: Bool
+		let displayFrame: CGRect
+		let filter: SCContentFilter
+		let configuration: SCStreamConfiguration
 
 		init(
 			stream: SCStream,
 			output: FrozenFrameStreamOutput,
-			selfCaptureFilterComplete: Bool
+			selfCaptureFilterComplete: Bool,
+			displayFrame: CGRect,
+			filter: SCContentFilter,
+			configuration: SCStreamConfiguration
 		) {
 			self.stream = stream
 			self.output = output
 			self.selfCaptureFilterComplete = selfCaptureFilterComplete
+			self.displayFrame = displayFrame
+			self.filter = filter
+			self.configuration = configuration
 		}
 
 		func stop() {
