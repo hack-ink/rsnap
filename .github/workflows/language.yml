@@ -31,7 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Fetch latest code
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Install Linux desktop build dependencies
         run: |
@@ -49,7 +49,7 @@ jobs:
             libxrandr-dev
 
       - name: Set up Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
         with:
           cache: true
           rustflags: ''
@@ -59,12 +59,12 @@ jobs:
         run: rustup toolchain install nightly --component rustfmt
 
       - name: Install cargo-make
-        uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595 # v2.81.11
+        uses: taiki-e/install-action@50414676f9f5d50a65992c6dd2ed02641263226c # v2.82.10
         with:
           tool: cargo-make
 
       - name: Install nextest
-        uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595 # v2.81.11
+        uses: taiki-e/install-action@50414676f9f5d50a65992c6dd2ed02641263226c # v2.82.10
         with:
           tool: nextest
 
@@ -72,12 +72,12 @@ jobs:
         run: cargo make fmt-rust-check
 
       - name: Run Rust style check
-        uses: hack-ink/vibe-style@bfb4d2d2f5e4b5e5ce8de4ed1d708b3a2f0e61fe # v0.2.1
+        uses: hack-ink/vibe-style@567174c977a3fc09229c81aacf10bf93edc4fd70 # v0.2.3
         with:
           language: rust
           workspace: true
           args: --all-features
-          version: v0.2.1
+          version: v0.2.3
 
       - name: Run Rust clippy
         run: cargo make check-rust
@@ -90,7 +90,7 @@ jobs:
     runs-on: macos-26
     steps:
       - name: Fetch latest code
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Print Apple toolchain
         run: |
@@ -99,13 +99,13 @@ jobs:
           xcodebuild -version
 
       - name: Set up Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
         with:
           cache: true
           rustflags: ''
 
       - name: Install cargo-make
-        uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595 # v2.81.11
+        uses: taiki-e/install-action@50414676f9f5d50a65992c6dd2ed02641263226c # v2.82.10
         with:
           tool: cargo-make
 
@@ -113,12 +113,12 @@ jobs:
         run: cargo make fmt-swift-check
 
       - name: Run Swift style check
-        uses: hack-ink/vibe-style@bfb4d2d2f5e4b5e5ce8de4ed1d708b3a2f0e61fe # v0.2.1
+        uses: hack-ink/vibe-style@567174c977a3fc09229c81aacf10bf93edc4fd70 # v0.2.3
         with:
           language: swift
           workspace: true
           args: --all-features
-          version: v0.2.1
+          version: v0.2.3
 
       - name: Run SwiftLint and strict build
         run: cargo make check-swift
@@ -131,21 +131,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Fetch latest code
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Set up Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
         with:
           cache: true
           rustflags: ''
 
       - name: Install cargo-make
-        uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595 # v2.81.11
+        uses: taiki-e/install-action@50414676f9f5d50a65992c6dd2ed02641263226c # v2.82.10
         with:
           tool: cargo-make
 
       - name: Install taplo
-        uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595 # v2.81.11
+        uses: taiki-e/install-action@50414676f9f5d50a65992c6dd2ed02641263226c # v2.82.10
         with:
           tool: taplo
 
