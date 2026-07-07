@@ -182,14 +182,7 @@ extension CaptureHostView {
 	}
 
 	func selectionSizeText(for rect: CGRect) -> String {
-		let scale = window?.screen?.backingScaleFactor ?? 1
-		let sizeText = "\(Int(round(rect.width * scale)))x\(Int(round(rect.height * scale)))px"
-
-		if abs(scale - 1) <= 0.005 {
-			return sizeText
-		}
-
-		return "\(sizeText) @\(String(format: "%g", Double(scale)))x"
+		SelectionSizeText.displayText(for: rect)
 	}
 
 	private func currentHostLocalFrozenSelectingPreviewSnapshot() -> LivePreviewSnapshot? {
