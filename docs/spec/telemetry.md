@@ -139,7 +139,10 @@ Expected capture-session chain:
 6. `capture.teardown`
 
 Optional host-effect timing events include `capture_timing.recognize_text` when the user requests
-OCR from a frozen capture.
+OCR from a frozen capture. OCR lifecycle diagnostics also include
+`capture.recognize_text_prewarm`, `capture.recognize_text_queued`, and
+`capture.recognize_text_discarded` so first-use Vision startup, request dispatch, and stale-job
+discarding can be distinguished without logging image or text contents.
 
 Screen-monitoring resource lifecycle events include `capture.stream_release_scheduled`,
 `capture.stream_release_canceled`, `capture.stream_release_requested`, and
