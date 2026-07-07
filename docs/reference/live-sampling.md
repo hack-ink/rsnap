@@ -133,6 +133,10 @@ Frozen commit must use `FrozenFrameAuthority` or another source with equivalent 
 - `post_token` is preferred: the frame sequence advanced after the frozen latch.
 - `latest_unchanged` is allowed only for a fresh same-sequence frame on an unchanged/static
   desktop.
+- `screenshot_manager` is allowed when the frozen authority has an active self-capture-safe
+  ScreenCaptureKit stream/filter but the display stream has stopped emitting frames because the
+  desktop is static. This path captures a current image through `SCScreenshotManager` with the same
+  content filter; it is not a cache-only latest-frame shortcut.
 - Cache-only wrappers that synthesize `capturedAt` at call time must not feed the frozen first
   frame.
 - A frozen-authority stream warmed before overlay windows became visible must be replaced after
@@ -142,8 +146,8 @@ Frozen commit must use `FrozenFrameAuthority` or another source with equivalent 
   running. Once the replacement stream is ready, the first Frozen display frame must come from a
   self-capture-excluding filter, not from a pre-overlay filter that can see Rsnap's own live mask,
   border, badge, or toolbar.
-- If no freshness-proven frame is available, fail the freeze with `no_fresh_frame` instead of
-  showing a screenshot from seconds earlier.
+- If no self-capture-safe stream/filter or freshness-proven capture source is available, fail the
+  freeze with `no_fresh_frame` instead of showing a screenshot from seconds earlier.
 
 This is the guard against the old regression where a quick drag could freeze a frame that came from
 seconds-old live-stream cache data while telemetry incorrectly reported it as current.

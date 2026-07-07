@@ -112,6 +112,9 @@ Do not encode values into the event name; emit values as fields.
 - Frozen capture frame provenance uses `snapshotSource`; `post_token` means ScreenCaptureKit
   produced a frame after the frozen latch, and `latest_unchanged` means no newer frame arrived
   but the frozen authority still had a fresh same-sequence frame for an unchanged/static desktop.
+  `screenshot_manager` means no fresh stream frame was available, so the frozen authority captured
+  a current image through `SCScreenshotManager` using the active self-capture-safe
+  ScreenCaptureKit content filter.
   `frameAgeMs` must be derived from the source frame's real capture timestamp, not from the time a
   wrapper copied cached pixels. The release handoff must not use cache-only live-sampler
   latest-monitor snapshots; those FFI wrappers were removed because they lacked

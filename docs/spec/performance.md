@@ -102,8 +102,9 @@ Mode transitions are not continuous cadence loops, but they are user-visible. Th
 release handoff must avoid waiting for a future ScreenCaptureKit frame when a freshness-proven
 frozen authority frame is already available. The intended path is:
 
-1. use a `post_token` frozen authority frame, or a fresh `latest_unchanged` authority frame for an
-   unchanged/static desktop,
+1. use a `post_token` frozen authority frame, a fresh `latest_unchanged` authority frame, or a
+   current `screenshot_manager` capture through the active self-capture-safe ScreenCaptureKit
+   filter for an unchanged/static desktop,
 2. present the frozen frame, toolbar, and scrim in one continuous handoff,
 3. perform cleanup such as secondary-window collapse after the first frozen frame is installed.
 

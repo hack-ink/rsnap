@@ -271,9 +271,10 @@ extension FrozenFrameAuthority {
 			} telemetrySnapshot: { [weak self] in
 				self?.currentTelemetrySnapshot() ?? (captureID: captureID, source: source)
 			}
+			let configuration = FrozenFrameContentFilterPlanner.streamConfiguration(for: target)
 			let stream = SCStream(
 				filter: preparedFilter.filter,
-				configuration: FrozenFrameContentFilterPlanner.streamConfiguration(for: target),
+				configuration: configuration,
 				delegate: output)
 			do {
 				try stream.addStreamOutput(
@@ -297,7 +298,10 @@ extension FrozenFrameAuthority {
 				streams[target.displayID] = DisplayStream(
 					stream: stream,
 					output: output,
-					selfCaptureFilterComplete: preparedFilter.selfCaptureFilterComplete
+					selfCaptureFilterComplete: preparedFilter.selfCaptureFilterComplete,
+					displayFrame: target.frame,
+					filter: preparedFilter.filter,
+					configuration: configuration
 				)
 			}
 			stateLock.unlock()

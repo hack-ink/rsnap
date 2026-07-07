@@ -37,19 +37,8 @@ RUST_BUILD_ARGS=(-p rsnap-host-ffi)
 RESOLVED_SIGN_IDENTITY=""
 STAGED_APP_DIRTY=0
 
-case "$MODE" in
-	run|logs|--logs|telemetry|--telemetry|verify|--verify)
-		default_rust_profile="final-release"
-		default_swift_configuration="release"
-		;;
-	*)
-		default_rust_profile="debug"
-		default_swift_configuration="debug"
-		;;
-esac
-
-RUST_PROFILE="${RSNAP_NATIVE_HOST_RUST_PROFILE:-$default_rust_profile}"
-SWIFT_CONFIGURATION="${RSNAP_NATIVE_HOST_SWIFT_CONFIGURATION:-$default_swift_configuration}"
+RUST_PROFILE="final-release"
+SWIFT_CONFIGURATION="release"
 if [[ -z "${RSNAP_NATIVE_HOST_SWIFT_CLEAN:-}" ]]; then
 	if [[ "$SWIFT_CONFIGURATION" == "release" ]]; then
 		# SwiftPM can reuse stale release objects across local worktree rebuilds. Prefer a
@@ -76,35 +65,6 @@ if [[ -z "$APP_VERSION" ]]; then
 	APP_VERSION="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version *= *"\(.*\)"/\1/p' "$ROOT_DIR/Cargo.toml" | head -n 1)"
 fi
 APP_VERSION="${APP_VERSION:-0.2.5}"
-
-require_liquid_glass_capable_swift_for_release() {
-	[[ "$SWIFT_CONFIGURATION" == "release" ]] || return 0
-
-	local swift_version_output
-	swift_version_output="$(swift --version 2>/dev/null || true)"
-	if python3 - "$swift_version_output" <<'PY'
-import re
-import sys
-
-match = re.search(r"Apple Swift version\s+(\d+)\.(\d+)", sys.argv[1])
-if not match:
-    sys.exit(1)
-
-major, minor = (int(match.group(1)), int(match.group(2)))
-sys.exit(0 if (major, minor) >= (6, 2) else 1)
-PY
-	then
-		return 0
-	fi
-
-	echo "error: release Rsnap native host builds require Apple Swift 6.2 or newer for Liquid Glass support." >&2
-	while IFS= read -r line; do
-		[[ -n "$line" ]] || continue
-		echo "error: found $line" >&2
-	done <<<"$swift_version_output"
-	echo "error: select a newer Xcode or set RSNAP_NATIVE_HOST_SWIFT_CONFIGURATION=debug for a local non-release fallback build." >&2
-	exit 1
-}
 
 relink_native_host_if_missing() {
 	local product_dir link_file swift_frameworks sdk swiftc
@@ -559,7 +519,6 @@ if [[ "$MODE" != "stage" ]]; then
 	terminate_running_host
 fi
 
-require_liquid_glass_capable_swift_for_release
 canonicalize_app_bundle_name
 if [[ "${RSNAP_NATIVE_HOST_FORCE_REBUILD:-0}" != "1" ]] && staged_bundle_is_current; then
 	BUILD_ROOT=""
