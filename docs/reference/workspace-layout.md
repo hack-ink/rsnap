@@ -222,8 +222,10 @@ The main host-kit files are split by responsibility:
   capture-image export orchestration
 - `CaptureSessionController+PreparedExport.swift`: frozen export render request construction,
   prepared export invalidation, scroll/annotation quiet-delay scheduling, and OCR image prewarming
-- `CaptureSessionController+TextRecognition.swift`: Vision OCR request execution and recognized
+- `CaptureSessionController+TextRecognition.swift`: OCR host-effect orchestration and recognized
   text pasteboard publication
+- `NativeTextRecognitionEngine.swift`: Vision OCR prewarming, background request execution, and
+  OCR result extraction
 - `CaptureSessionController+Runtime.swift`: shared monitor/window lookup, overlay refresh,
   teardown, status message, and capture-stream release helpers
 - `CaptureChrome.swift`: shared native chrome metrics, palette, and drawing geometry
