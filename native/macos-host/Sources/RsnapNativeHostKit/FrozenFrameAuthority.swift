@@ -112,7 +112,7 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 	var selfCaptureFilterRequired = false
 	var selfCaptureUnsafeAfterUptime: TimeInterval?
 	var activeDisplayIDs: Set<CGDirectDisplayID> = []
-	var displayTargets: [CGDirectDisplayID: FrozenFrameDisplayTarget] = [:]
+	var displayTargets: [CGDirectDisplayID: FrozenDisplayTarget] = [:]
 	var streams: [CGDirectDisplayID: DisplayStream] = [:]
 	var latestFrames: [CGDirectDisplayID: FrameRecord] = [:]
 	var orderedFrameHistory: [CGDirectDisplayID: [FrameRecord]] = [:]
@@ -261,4 +261,11 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		return snapshot
 	}
 
+	func refreshShareableContentCache(captureID: UInt64 = 0, source: String = "cache") {
+		ShareableContentLookup.refreshCache(captureID: captureID, source: source)
+	}
+
+	func hasFreshShareableContentCache() -> Bool {
+		ShareableContentLookup.hasFreshCache()
+	}
 }

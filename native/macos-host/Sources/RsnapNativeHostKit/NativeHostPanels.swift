@@ -57,7 +57,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
 	init(
 		settingsStore: NativeHostSettingsStore,
-		softwareUpdater: NativeHostSoftwareUpdater,
+		softwareUpdater: SoftwareUpdater,
 		onClose: @escaping () -> Void = {}
 	) {
 		self.viewModel = NativeHostSettingsViewModel(

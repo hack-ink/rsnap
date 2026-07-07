@@ -4,6 +4,14 @@ import Foundation
 import QuartzCore
 import RsnapHostBridge
 
+private struct ChromeRefreshTelemetryKey: Equatable {
+	let targetHz: Int
+	let hudGlassEnabled: Bool
+	let hudGlassMode: String
+	let liquidGlassStyle: String
+	let liquidGlassAvailable: Bool
+}
+
 @MainActor
 final class CaptureHostView: NSView {
 	static let liveDragIntentThreshold: CGFloat = 3
@@ -26,20 +34,20 @@ final class CaptureHostView: NSView {
 	private(set) var chrome = CaptureChromeState()
 	private(set) var settings = NativeHostSettings.defaults
 	private var trackingAreaRef: NSTrackingArea?
-	var annotationStyleWheelGate = CaptureHostAnnotationStyleWheelGate()
+	var annotationStyleWheelGate = AnnotationStyleWheelGate()
 	var lastCursorPresentation: CaptureHostCursorPresentation?
 	let cursorOwner = CaptureHostCursorOwner()
-	var livePrimaryInteraction = CaptureHostLivePrimaryInteractionState()
-	let mouseReleaseRecovery = CaptureHostMouseReleaseRecovery()
-	let livePointerPreview = CaptureHostLivePointerPreviewState()
+	var livePrimaryInteraction = PrimaryInteractionState()
+	let mouseReleaseRecovery = MouseReleaseRecovery()
+	let livePointerPreview = LivePointerPreviewState()
 	var liveHighlightedWindowPreview: WindowSnapshot?
 	var sampleUpdatedLiveChromeRenderInProgress = false
-	var frozenFirstDisplayHandoff = CaptureHostFrozenFirstDisplayHandoffState()
+	var frozenFirstDisplayHandoff = DisplayHandoffState()
 	var lastLivePreviewSnapshot: LivePreviewSnapshot?
-	var liveSampleCache = CaptureHostLiveSampleCache()
-	lazy var frozenToolbar = CaptureHostFrozenToolbarCoordinator(hostView: self)
-	private lazy var materialViews = CaptureHostMaterialViewCoordinator(hostView: self)
-	lazy var pointerDispatchQueue = CaptureHostPointerDispatchQueue(
+	var liveSampleCache = LiveSampleCache()
+	lazy var frozenToolbar = FrozenToolbarCoordinator(hostView: self)
+	private lazy var materialViews = MaterialViewCoordinator(hostView: self)
+	lazy var pointerDispatchQueue = PointerDispatchQueue(
 		targetInterval: { [weak self] in
 			guard let self else {
 				return NativeHostDisplayRefresh.frameInterval(
@@ -55,12 +63,12 @@ final class CaptureHostView: NSView {
 	lazy var liveRenderer = LiveOverlayRenderer(hostView: self)
 	private var liveRendererInstalled = false
 	private var deferredLiveShutdownWorkItem: DispatchWorkItem?
-	private var loggedLiveRefreshTarget: LiveChromeRefreshTelemetryKey?
-	let liveInputTelemetry = CaptureHostLiveInputTelemetry()
+	private var loggedLiveRefreshTarget: ChromeRefreshTelemetryKey?
+	let liveInputTelemetry = LiveInputTelemetry()
 
 	override var acceptsFirstResponder: Bool { true }
 	override var isOpaque: Bool { false }
-	var toolbarHoverState: CaptureHostToolbarHoverState { frozenToolbar.hoverState }
+	var toolbarHoverState: ToolbarHoverState { frozenToolbar.hoverState }
 
 	override func hitTest(_ point: NSPoint) -> NSView? {
 		guard scene.mode == .frozen, chrome.scrollMinimapPreview != nil,
@@ -127,7 +135,7 @@ final class CaptureHostView: NSView {
 		self.chrome = chrome
 		self.settings = settings
 		if hostLocalFrozenSelectingEnded {
-			clearLivePrimaryInteractionState(rendersImmediately: false)
+			clearPrimaryInteractionState(rendersImmediately: false)
 		}
 		if previousMode != scene.mode {
 			window?.acceptsMouseMovedEvents = true
@@ -147,7 +155,7 @@ final class CaptureHostView: NSView {
 				liveHighlightedWindowPreview = scene.highlightedWindow
 			}
 		} else {
-			clearLivePrimaryInteractionState(rendersImmediately: false)
+			clearPrimaryInteractionState(rendersImmediately: false)
 			if scene.mode == .hidden {
 				livePrimaryInteraction.clearHoverChromeSuppression()
 				frozenFirstDisplayHandoff.reset()
@@ -399,7 +407,7 @@ final class CaptureHostView: NSView {
 			seedLivePointerPreview(scene.pointer, recordsInputLatency: false)
 			liveHighlightedWindowPreview = scene.highlightedWindow
 		} else {
-			clearLivePrimaryInteractionState(rendersImmediately: false)
+			clearPrimaryInteractionState(rendersImmediately: false)
 			resetLivePointerPreview()
 			liveHighlightedWindowPreview = nil
 		}
@@ -466,7 +474,7 @@ final class CaptureHostView: NSView {
 			now: ProcessInfo.processInfo.systemUptime
 		)
 		lastLivePreviewSnapshot = retainedLivePreview
-		clearLivePrimaryInteractionState(rendersImmediately: false)
+		clearPrimaryInteractionState(rendersImmediately: false)
 		resetLivePointerPreview()
 		liveHighlightedWindowPreview = nil
 		frozenToolbar.clearHoveredAction()
@@ -585,13 +593,13 @@ final class CaptureHostView: NSView {
 				return
 			}
 			if let selection = localFrozenSelectionRect().map({
-				CaptureHostFrozenPresentationRenderer.pixelAlignedSelectionRect(
+				FrozenSurfaceRenderer.pixelAlignedSelectionRect(
 					$0,
 					backingScaleFactor: window?.screen?.backingScaleFactor ?? 1
 				)
 			}) {
 				let toolbarLayout = toolbarLayout(for: selection)
-				CaptureHostFrozenPresentationRenderer.render(
+				FrozenSurfaceRenderer.render(
 					selection: selection,
 					bounds: bounds,
 					backingScaleFactor: window?.screen?.backingScaleFactor ?? 1,
@@ -600,7 +608,7 @@ final class CaptureHostView: NSView {
 					chrome: chrome,
 					toolbarLayout: toolbarLayout,
 					toolbarHoverState: toolbarHoverState,
-					materialState: CaptureHostFrozenPresentationMaterialState(
+					materialState: FrozenSurfaceMaterialState(
 						toolbarLiquidGlassVisible: materialViews.isFrozenToolbarLiquidGlassVisible,
 						toolbarLiquidGlassContentDrawn: materialViews
 							.isFrozenToolbarLiquidGlassContentDrawn,
@@ -821,7 +829,7 @@ final class CaptureHostView: NSView {
 		deferredLiveShutdownWorkItem?.cancel()
 		deferredLiveShutdownWorkItem = nil
 		let displayTargetHz = currentDisplayTargetFramesPerSecond()
-		let refreshTarget = LiveChromeRefreshTelemetryKey(
+		let refreshTarget = ChromeRefreshTelemetryKey(
 			targetHz: displayTargetHz,
 			hudGlassEnabled: settings.hudGlassEnabled,
 			hudGlassMode: settings.resolvedHudGlassMode.rawValue,

@@ -117,7 +117,7 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 	private var didPresentLaunchPermissionOnboarding = false
 	private var settingsWindowIsVisible = false
 	private var permissionRecoveryGuideIsVisible = false
-	private lazy var softwareUpdater = NativeHostSoftwareUpdater()
+	private lazy var softwareUpdater = SoftwareUpdater()
 	@objc public dynamic var window: NSWindow?
 	private lazy var sessionController: CaptureSessionController = {
 		let controller = CaptureSessionController(settingsStore: settingsStore)
@@ -133,7 +133,7 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 	private var statusItem: NSStatusItem?
 	private weak var captureMenuItem: NSMenuItem?
 	private weak var quickScreenshotMenuItem: NSMenuItem?
-	private lazy var permissionRecoveryWindowController = PermissionRecoveryGuideWindowController()
+	private lazy var permissionRecoveryWindowController = PermissionGuideWindowController()
 	private lazy var settingsWindowController = SettingsWindowController(
 		settingsStore: settingsStore,
 		softwareUpdater: softwareUpdater,

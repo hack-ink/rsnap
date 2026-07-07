@@ -12,14 +12,14 @@ enum NativeHostSettingsWindowMetrics {
 final class NativeHostSettingsViewModel: ObservableObject {
 	@Published private(set) var settings: NativeHostSettings
 	@Published private(set) var launchAtLoginState = LaunchAtLoginState.current()
-	@Published private(set) var softwareUpdateSettings: NativeHostSoftwareUpdater.Snapshot
+	@Published private(set) var softwareUpdateSettings: SoftwareUpdater.Snapshot
 
 	private let settingsStore: NativeHostSettingsStore
-	private let softwareUpdater: NativeHostSoftwareUpdater
+	private let softwareUpdater: SoftwareUpdater
 
 	init(
 		settingsStore: NativeHostSettingsStore,
-		softwareUpdater: NativeHostSoftwareUpdater
+		softwareUpdater: SoftwareUpdater
 	) {
 		self.settingsStore = settingsStore
 		self.softwareUpdater = softwareUpdater
@@ -52,7 +52,7 @@ final class NativeHostSettingsViewModel: ObservableObject {
 		}
 	}
 
-	func setSoftwareUpdateMode(_ mode: NativeHostSoftwareUpdater.Mode) {
+	func setSoftwareUpdateMode(_ mode: SoftwareUpdater.Mode) {
 		softwareUpdater.setMode(mode)
 		refresh()
 	}
