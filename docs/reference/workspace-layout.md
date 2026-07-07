@@ -204,147 +204,147 @@ The main host-kit files are split by responsibility:
   permission, onboarding, update, and status-menu orchestration
 - `CaptureSessionController.swift`: shared state and lifecycle hooks for the Swift host-session
   coordinator around `RsnapHostSession`
-- `CaptureSessionController+Live.swift`: live capture startup, live sampling warmup, pointer
+- `LiveCapture.swift`: live capture startup, live sampling warmup, pointer
   movement, and live primary interaction routing
-- `CaptureSessionController+FrozenInteraction.swift`: frozen selection movement/resizing,
+- `FrozenInteraction.swift`: frozen selection movement/resizing,
   annotation commands, auto-center, loupe, and toolbar command forwarding
-- `CaptureSessionController+HostRequests.swift`: Rust host-request draining, freeze-snapshot
+- `HostRequests.swift`: Rust host-request draining, freeze-snapshot
   commit handling, host-owned frozen scene preparation, and host-effect dispatch
-- `CaptureSessionController+ScrollCapture.swift`: native scroll-capture lifecycle startup,
+- `ScrollCaptureSession.swift`: native scroll-capture lifecycle startup,
   viewport geometry, sampling-loop scheduling, and scroll minimap chrome setup
-- `CaptureSessionController+ScrollCaptureObservation.swift`: native scroll-capture live/fallback
+- `ScrollCaptureSampling.swift`: native scroll-capture live/fallback
   sample drains, observation batching, stitch result application, and preview refresh
-- `NativeScrollCaptureWheelInput.swift`: native scroll-capture wheel interception, global monitor
+- `ScrollCaptureWheelInput.swift`: native scroll-capture wheel interception, global monitor
   lifecycle, forwarded CGEvent posting, queued forwarded-delta draining, and motion-hint updates
-- `NativeScrollCaptureObservationPipeline.swift`: conversion of ordered native samples and
+- `ScrollCapturePipeline.swift`: conversion of ordered native samples and
   fallback frames into Rust scroll observations plus preview export batches
-- `CaptureSessionController+Export.swift`: copy/save host effects, output naming, and
+- `ExportActions.swift`: copy/save host effects, output naming, and
   capture-image export orchestration
-- `CaptureSessionController+PreparedExport.swift`: frozen export render request construction,
+- `PreparedExport.swift`: frozen export render request construction,
   prepared export invalidation, scroll/annotation quiet-delay scheduling, and OCR image prewarming
-- `CaptureSessionController+TextRecognition.swift`: OCR host-effect orchestration and recognized
+- `TextRecognition.swift`: OCR host-effect orchestration and recognized
   text pasteboard publication
-- `NativeTextRecognitionEngine.swift`: Vision OCR prewarming, background request execution, and
+- `TextRecognitionEngine.swift`: Vision OCR prewarming, background request execution, and
   OCR result extraction
-- `CaptureSessionController+Runtime.swift`: shared monitor/window lookup, overlay refresh,
+- `CaptureRuntime.swift`: shared monitor/window lookup, overlay refresh,
   teardown, status message, and capture-stream release helpers
 - `CaptureChrome.swift`: shared native chrome metrics, palette, and drawing geometry
 - `CaptureOverlayWindow.swift`: AppKit `NSPanel` wrapper for capture overlay windows
 - `CaptureOverlayController.swift`: overlay window set, focus, stream preparation, and mouse
   passthrough management
-- `CaptureOverlayImageSampler.swift`: CoreGraphics below-overlay capture and display-point sample
+- `OverlayImageSampler.swift`: CoreGraphics below-overlay capture and display-point sample
   adaptation for live chrome, frozen capture effects, and scroll fallback acquisition
 - `FrozenFrameAuthority.swift`: frozen/live frame authority state, ordered frame storage, setup
   completion, and telemetry bookkeeping
-- `FrozenFrameAuthority+StreamSetup.swift`: ScreenCaptureKit frozen-frame stream setup,
+- `FrozenFrameStreams.swift`: ScreenCaptureKit frozen-frame stream setup,
   shareable-content lookup, self-capture-safe stream gating, and lifecycle reset
-- `FrozenFrameAuthority+SnapshotResolution.swift`: frozen-frame latch-token resolution,
+- `FrozenFrameSnapshots.swift`: frozen-frame latch-token resolution,
   RGB/loupe/region sampling, ordered region-frame draining, self-capture-safe frame gating, and
   fresh-frame authority decisions
 - `FrozenFrameStreamOutput.swift`: ScreenCaptureKit stream-output delegate adaptation,
   usable-frame filtering, display-time conversion, and frame-record emission into the authority
-- `FrozenFrameContentFilterPlanner.swift`: frozen-frame display target planning, shareable-content
+- `ContentFilterPlanner.swift`: frozen-frame display target planning, shareable-content
   cache freshness, self-capture-excluding content filter construction, and stream configuration
 - `NSScreenDisplayID.swift`: shared AppKit display-ID extraction for native capture surfaces
-- `FrozenFramePixelBufferBridge.swift`: CVPixelBuffer lock/lifetime adaptation for frozen-frame
+- `PixelBufferBridge.swift`: CVPixelBuffer lock/lifetime adaptation for frozen-frame
   CGImage creation, RGB sampling, loupe patch extraction, and RGBA region extraction
 - `LiveFrameStream.swift`: native ordered live region-frame stream broker over
   `FrozenFrameAuthority` for scroll and backdrop continuity
-- `CaptureHostAnnotationStyleWheelGate.swift`: frozen annotation-size wheel dead-zone and
+- `AnnotationStyleWheelGate.swift`: frozen annotation-size wheel dead-zone and
   per-gesture step throttling
-- `CaptureHostToolbarHoverState.swift`: frozen toolbar hover target state, change detection, and
+- `ToolbarHoverState.swift`: frozen toolbar hover target state, change detection, and
   clearing behavior
-- `CaptureHostFrozenToolbarCoordinator.swift`: frozen toolbar visible item planning, hit testing,
+- `FrozenToolbarCoordinator.swift`: frozen toolbar visible item planning, hit testing,
   hover state ownership, and toolbar action dispatch into the session controller
-- `CaptureHostFrozenFirstDisplayHandoffState.swift`: frozen-entry first-display handoff state,
+- `DisplayHandoffState.swift`: frozen-entry first-display handoff state,
   completion queueing, pending-frame evidence, and deferred classic toolbar glass
-- `CaptureHostScrollToolbarBackdropState.swift`: scroll toolbar backdrop capture generation,
+- `ToolbarBackdropState.swift`: scroll toolbar backdrop capture generation,
   seed-patch cache, active frame, refresh cadence, and change-count state
-- `CaptureHostScrollToolbarBackdropWorker.swift`: scroll toolbar backdrop live-frame freshness,
+- `ToolbarBackdropWorker.swift`: scroll toolbar backdrop live-frame freshness,
   signature hashing, fallback capture selection, and capture result shaping
 - `CaptureHostView.swift`: AppKit view orchestration, hit testing, frozen presentation rendering,
   and dirty-region redraw narrowing for active frozen selection transforms
-- `CaptureHostMaterialViewCoordinator.swift`: Liquid Glass/material subview ownership, classic glass
+- `MaterialViewCoordinator.swift`: Liquid Glass/material subview ownership, classic glass
   patch resolution, and scroll-toolbar backdrop refresh scheduling plus view installation
-- `CaptureHostGlassPatchResolver.swift`: classic glass patch cache lookup, frozen display crop
+- `GlassPatchResolver.swift`: classic glass patch cache lookup, frozen display crop
   extraction, and CoreImage blur/tint adaptation for capture-host HUD, loupe, and toolbar surfaces
-- `FrozenPreparedExportStore.swift`: frozen export render requests, prepared export cache keys,
+- `PreparedExportStore.swift`: frozen export render requests, prepared export cache keys,
   copy/save/recognize-text job result models, and thread-safe prepared image stores
-- `FrozenSelectionImageRenderer.swift`: frozen selection render jobs, capture-frame effect
+- `SelectionImageRenderer.swift`: frozen selection render jobs, capture-frame effect
   application, overlay composition, display cropping, and PNG encoding for copy/save/OCR
   preparation
-- `CaptureHostFrozenPresentationRenderer.swift`: frozen display surface, selection chrome, overlay,
+- `FrozenSurfaceRenderer.swift`: frozen display surface, selection chrome, overlay,
   minimap, size badge, and classic toolbar drawing orchestration from an explicit host context
-- `CaptureHostFrozenSelectionChromeRenderer.swift`: frozen selection scrim, dashed border, resize
+- `SelectionChromeRenderer.swift`: frozen selection scrim, dashed border, resize
   handles, and selection-size badge rendering
-- `CaptureHostFrozenOverlayRenderer.swift`: frozen annotation overlay rendering for mosaic,
+- `FrozenOverlayRenderer.swift`: frozen annotation overlay rendering for mosaic,
   spotlight, pen, arrow, and text overlays
-- `CaptureHostScrollMinimapRenderer.swift`: frozen scroll-capture minimap presentation over the
+- `ScrollMinimapRenderer.swift`: frozen scroll-capture minimap presentation over the
   Rust-owned minimap layout plan and host-provided preview image
-- `CaptureHostLiveSampleCache.swift`: capture-host live chrome/RGB sample reuse cache and pointer
+- `LiveSampleCache.swift`: capture-host live chrome/RGB sample reuse cache and pointer
   sample matching
-- `CaptureHostLiveSampleResolver.swift`: capture-host live chrome/RGB sample resolution,
+- `LiveSampleResolver.swift`: capture-host live chrome/RGB sample resolution,
   loupe-patch reuse, and cache seeding policy
-- `CaptureHostLiveInputTelemetry.swift`: capture-host live pointer/mouse input telemetry,
+- `LiveInputTelemetry.swift`: capture-host live pointer/mouse input telemetry,
   pointer-event gap recording, and live-chrome input summary emission
-- `CaptureHostLivePointerPreviewState.swift`: capture-host live pointer preview point,
+- `LivePointerPreviewState.swift`: capture-host live pointer preview point,
   input-latency timestamp, sequence, and duplicate-move suppression state
-- `CaptureHostLivePrimaryInteractionState.swift`: capture-host live primary drag, release,
+- `PrimaryInteractionState.swift`: capture-host live primary drag, release,
   completion, and hover-suppression state transitions
-- `CaptureHostMouseReleaseRecovery.swift`: capture-host local mouse-up monitor and live/frozen
+- `MouseReleaseRecovery.swift`: capture-host local mouse-up monitor and live/frozen
   release-watchdog scheduling for AppKit interactions whose mouse-up event can be missed
-- `CaptureHostPointerDispatch.swift`: capture-host pointer dispatch events, a shared delivery queue
+- `PointerDispatch.swift`: capture-host pointer dispatch events, a shared delivery queue
   with separate hover/drag queue state, drag-side queued-hover cancellation, and
   AppKit-to-controller pointer delivery for live drag and frozen selection-transform drag
 - `CaptureHostCursorOwner.swift`: shared native cursor-owner helper for applying and clearing the
   current AppKit cursor across ordinary capture views without owning an `NSCursor` push stack
-- `CapturePointerAccentLayer.swift`: shared AppKit layer for ordinary and quick screenshot
+- `PointerAccentLayer.swift`: shared AppKit layer for ordinary and quick screenshot
   native-cursor hotspot accent chrome
-- `CaptureHostView+InputRouting.swift`: capture-host AppKit mouse, wheel, key, cursor, toolbar
+- `InputRouting.swift`: capture-host AppKit mouse, wheel, key, cursor, toolbar
   shortcut, and pointer-dispatch routing into the session controller
 - `QuickScreenshotController.swift`: non-activating quick screenshot acquisition path. It owns
   event-tap input interception and native-cursor companion halo feedback without making overlay
   windows key, mouse-interactive, or activating the app, so transient target UI such as context
   menus remains visible.
-- `CaptureHostView+LivePrimaryInteraction.swift`: capture-host live primary interaction release
+- `LivePrimaryInteraction.swift`: capture-host live primary interaction release
   recovery, pointer-preview mutation, mouse-up monitor wiring, and release-watchdog orchestration
-- `CaptureHostView+LivePreview.swift`: capture-host live preview snapshots, HUD/loupe placement,
+- `LivePreview.swift`: capture-host live preview snapshots, HUD/loupe placement,
   live sample-cache use, and controller preview-demand updates
 - `LiveOverlayRenderer.swift`: live overlay render orchestration for HUD, loupe, frame clock,
   chrome transactions, and layer setup
-- `LiveOverlayRenderer+FocusRendering.swift`: live overlay frozen display, focus scrim,
+- `LiveOverlayFocus.swift`: live overlay frozen display, focus scrim,
   selection-flow, frozen-pending, drag-selection, and size-badge rendering
-- `LiveHudColorRollCoordinator.swift`: live HUD color swatch/hex presentation, pending color roll
+- `ColorRollCoordinator.swift`: live HUD color swatch/hex presentation, pending color roll
   animation state, resolved hex roll transitions, and roll-layer lifecycle
 - `LiveHudHexRollPlan.swift`: deterministic pending/resolved hex-roll digit sequences,
   direction choices, durations, and phase offsets for live HUD color animation
-- `LiveHudColorRollTextLayerFactory.swift`: CATextLayer construction and text application helpers
+- `RollTextLayerFactory.swift`: CATextLayer construction and text application helpers
   for live HUD color roll stacks
 - `LiveOverlayTypography.swift`: shared native live overlay font and text metrics
 - `LiveOverlayLayers.swift`: reusable Core Animation layer subclasses for live selection flow and
   scrim masking
 - `LiveChromePlacement.swift`: live HUD/loupe text metrics, pending color text, and deterministic
   floating placement geometry shared by capture host and live chrome rendering
-- `LiveOverlayWindowSnapshotFeed.swift`, `LiveOverlayChromeSampleFeed.swift`,
-  `LiveOverlayChromeSamplePolicy.swift`, and `LiveFrameClockDriver.swift`: live overlay support
+- `WindowSnapshotFeed.swift`, `ChromeSampleFeed.swift`,
+  `ChromeSamplePolicy.swift`, and `LiveFrameClockDriver.swift`: live overlay support
   boundaries for target-window snapshots, chrome color/patch sampling and cache policy, and
   display-rate frame ticks
-- `FrozenToolbarLayoutPlanner.swift`: deterministic frozen-toolbar item availability, layout, and
+- `ToolbarLayoutPlanner.swift`: deterministic frozen-toolbar item availability, layout, and
   hit-test geometry shared by classic drawing, Liquid Glass content, and native probes
 - `FrozenToolbarRenderView.swift`: shared frozen-toolbar content drawing for classic AppKit
   toolbar rendering and Liquid Glass toolbar content
-- `CaptureGeometry.swift`, `CaptureHostAnnotationStyleWheelGate.swift`,
-  `CaptureHostToolbarHoverState.swift`, `CaptureHostFrozenFirstDisplayHandoffState.swift`,
-  `CaptureHostScrollToolbarBackdropState.swift`, `CaptureHostCursorSupport.swift`,
-  `CaptureHostCursorOwner.swift`, `CapturePointerAccentLayer.swift`,
-  `CaptureHostScrollMinimapRenderer.swift`,
-  `CaptureHostLiveSampleCache.swift`,
-  `CaptureHostLiveSampleResolver.swift`, `CaptureHostLiveInputTelemetry.swift`,
-  `CaptureHostLivePointerPreviewState.swift`, `CaptureHostLivePrimaryInteractionState.swift`,
-  `CaptureHostMouseReleaseRecovery.swift`, `CaptureHostPointerDispatch.swift`,
-  `CaptureHostFrozenImageEffects.swift`, `CaptureHostGlassPatchResolver.swift`,
-  `FrozenFramePixelBufferBridge.swift`, `FrozenPreparedExportStore.swift`,
-  `LiveChromeRefreshTelemetryKey.swift`, and `NativeHostTextMetrics.swift`: focused support
+- `CaptureGeometry.swift`, `AnnotationStyleWheelGate.swift`,
+  `ToolbarHoverState.swift`, `DisplayHandoffState.swift`,
+  `ToolbarBackdropState.swift`, `CaptureHostCursorSupport.swift`,
+  `CaptureHostCursorOwner.swift`, `PointerAccentLayer.swift`,
+  `ScrollMinimapRenderer.swift`,
+  `LiveSampleCache.swift`,
+  `LiveSampleResolver.swift`, `LiveInputTelemetry.swift`,
+  `LivePointerPreviewState.swift`, `PrimaryInteractionState.swift`,
+  `MouseReleaseRecovery.swift`, `PointerDispatch.swift`,
+  `FrozenImageEffects.swift`, `GlassPatchResolver.swift`,
+  `PixelBufferBridge.swift`, `PreparedExportStore.swift`, and
+  `NativeHostTextMetrics.swift`: focused support
   boundaries for shared capture geometry, frozen annotation-size wheel gating, frozen toolbar hover
   state, frozen first-display handoff state, scroll toolbar backdrop state, capture-host cursor
   presentation, AppKit cursor adaptation, shared screenshot pointer hotspot accent chrome, frozen minimap
@@ -352,7 +352,7 @@ The main host-kit files are split by responsibility:
   live primary interaction state,
   AppKit mouse-release recovery, pointer dispatch queue throttling, Rust-backed frozen image
   effects, capture-host glass patch caching and blur/tint adaptation, frozen-frame pixel-buffer
-  image/sampling adaptation, prepared export cache ownership, live-chrome telemetry identity, and
+  image/sampling adaptation, prepared export cache ownership, and
   shared native text measurement
 - `FrozenAnnotationStyles.swift`: frozen annotation colors, style toolbar state, and Swift/Rust
   frozen overlay style conversion
@@ -375,12 +375,12 @@ The main host-kit files are split by responsibility:
   overlay edit/export FFI calls
 - `Sources/RsnapHostBridge/HostFFISupport.swift`: shared Swift bridge status, geometry, and
   owned-buffer adaptation helpers
-- `NativeHostSettingsView.swift`, `NativeHostSettingsNavigation.swift`, and
-  `NativeHostSettingsSurface.swift`: SwiftUI settings view model, shell layout, navigation, and
+- `NativeHostSettingsView.swift`, `SettingsNavigation.swift`, and
+  `SettingsSurface.swift`: SwiftUI settings view model, shell layout, navigation, and
   reusable settings surfaces
-- `NativeHostAppearanceSettings.swift`, `NativeHostCaptureSettingsPanel.swift`,
-  `NativeHostOutputSettingsPanel.swift`, `NativeHostCaptureFrameSettings.swift`,
-  `PermissionsSettingsPanel.swift`, and `NativeHostAboutSettingsPanel.swift`: focused settings
+- `AppearanceSettingsPanel.swift`, `CaptureSettingsPanel.swift`,
+  `OutputSettingsPanel.swift`, `CaptureFrameSettings.swift`,
+  `PermissionsSettingsPanel.swift`, and `AboutSettingsPanel.swift`: focused settings
   panels for appearance, capture shortcuts/input, output location/naming, capture-frame presets,
   permission/setup controls, and about/update controls
 

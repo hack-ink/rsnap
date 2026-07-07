@@ -12,7 +12,7 @@ final class CaptureOverlayController {
 	private var focusedWindowNumber: Int?
 	private var collapsedForFrozen = false
 	private lazy var windowSnapshotFeed = WindowSnapshotFeed()
-	private let liveChromePipeline: CaptureOverlayLiveChromePipeline
+	private let liveChromePipeline: LiveChromePipeline
 	private var pendingCaptureStreamPreparation: (() -> Void)?
 	private var primaryMousePassthroughToken: UInt64 = 0
 	private var allMousePassthroughActive = false
@@ -22,10 +22,10 @@ final class CaptureOverlayController {
 		liveFrameStream: LiveFrameStreamBroker,
 		frameRgbSampler: @escaping ChromeSampleFeed.FrameRgbSampler,
 		framePatchSampler: @escaping ChromeSampleFeed.FramePatchSampler,
-		frameRegionSampler: @escaping CaptureOverlayLiveChromePipeline.FrameRegionSampler
+		frameRegionSampler: @escaping LiveChromePipeline.FrameRegionSampler
 	) {
 		self.controller = controller
-		self.liveChromePipeline = CaptureOverlayLiveChromePipeline(
+		self.liveChromePipeline = LiveChromePipeline(
 			liveFrameStream: liveFrameStream,
 			frameRgbSampler: frameRgbSampler,
 			framePatchSampler: framePatchSampler,
@@ -390,7 +390,7 @@ final class CaptureOverlayController {
 
 		for window in windowsToRetire {
 			window.hostView.clearVisibleCursorOverride()
-			window.hostView.clearLivePrimaryInteractionState(rendersImmediately: false)
+			window.hostView.clearPrimaryInteractionState(rendersImmediately: false)
 			window.hostView.finishLivePresentationTelemetry(reason: "close")
 			window.hostView.controller = nil
 			window.ignoresMouseEvents = true
@@ -555,7 +555,7 @@ final class CaptureOverlayController {
 		guard let source = frozenCaptureJobSource(near: point) else {
 			return nil
 		}
-		return CaptureOverlayImageSampler.captureBelowOverlay(in: rect, source: source)
+		return OverlayImageSampler.captureBelowOverlay(in: rect, source: source)
 	}
 
 	static var desktopFrame: CGRect {
