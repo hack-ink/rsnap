@@ -20,16 +20,16 @@ enum RsnapNativeHostKitProbe {
 		assertManualUpdateCheckRemainsAvailable()
 		assertImmediateInstallGateWaitsForCaptureIdle()
 		assertCaptureHostCursorMapping()
-		assertCaptureHostPointerDispatchSupport()
-		assertCaptureHostPointerDispatchQueueSemantics()
-		assertCaptureHostLivePrimaryInteractionState()
-		assertCaptureHostFrozenFirstDisplayHandoffState()
-		assertCaptureHostScrollToolbarBackdropState()
-		assertCaptureHostScrollToolbarBackdropWorker()
-		FrozenFramePixelBufferRegionProbe.verifyRegionSnapshotMapping()
-		assertCaptureHostAnnotationStyleWheelGate()
-		assertCaptureHostToolbarHoverState()
-		assertCaptureHostLiveSampleCachePointMatching()
+		assertPointerDispatchSupport()
+		assertPointerDispatchQueueSemantics()
+		assertPrimaryInteractionState()
+		assertDisplayHandoffState()
+		assertToolbarBackdropState()
+		assertToolbarBackdropWorker()
+		PixelBufferRegionProbe.verifyRegionSnapshotMapping()
+		assertAnnotationStyleWheelGate()
+		assertToolbarHoverState()
+		assertLiveSampleCachePointMatching()
 		let minimapExportSize = CGSize(width: 100, height: 200)
 		guard
 			let rightMinimap = scrollCaptureMinimapPlan(
@@ -179,18 +179,18 @@ enum RsnapNativeHostKitProbe {
 		}
 	}
 
-	private static func assertCaptureHostPointerDispatchSupport() {
+	private static func assertPointerDispatchSupport() {
 		guard
-			CaptureHostPointerDispatchEvent.moved(.zero).track == .hover,
-			CaptureHostPointerDispatchEvent.liveDragged(.zero).track == .drag,
-			CaptureHostPointerDispatchEvent.frozenSelectionDragged(.zero).track == .drag,
+			PointerDispatchEvent.moved(.zero).track == .hover,
+			PointerDispatchEvent.liveDragged(.zero).track == .drag,
+			PointerDispatchEvent.frozenSelectionDragged(.zero).track == .drag,
 			approximatelyEqual(
-				CaptureHostPointerDispatchTiming.delay(
+				PointerDispatchTiming.delay(
 					now: 10,
 					targetInterval: 0.25,
 					lastDispatchUptime: 9.90),
 				0.15),
-			CaptureHostPointerDispatchTiming.delay(
+			PointerDispatchTiming.delay(
 				now: 10,
 				targetInterval: 0.25,
 				lastDispatchUptime: 9.50) == 0
@@ -199,11 +199,11 @@ enum RsnapNativeHostKitProbe {
 		}
 	}
 
-	private static func assertCaptureHostPointerDispatchQueueSemantics() {
+	private static func assertPointerDispatchQueueSemantics() {
 		let recorder = PointerDispatchProbeRecorder()
 		MainActor.assumeIsolated {
 			var scheduledWorkItems: [DispatchWorkItem] = []
-			let queue = CaptureHostPointerDispatchQueue(
+			let queue = PointerDispatchQueue(
 				targetInterval: { 3_600 },
 				dispatchEvent: { recorder.append($0) },
 				schedule: { _, workItem in scheduledWorkItems.append(workItem) }
@@ -224,7 +224,7 @@ enum RsnapNativeHostKitProbe {
 		recorder.removeAll()
 		MainActor.assumeIsolated {
 			var scheduledWorkItems: [DispatchWorkItem] = []
-			let queue = CaptureHostPointerDispatchQueue(
+			let queue = PointerDispatchQueue(
 				targetInterval: { 3_600 },
 				dispatchEvent: { recorder.append($0) },
 				schedule: { _, workItem in scheduledWorkItems.append(workItem) }
@@ -248,8 +248,8 @@ enum RsnapNativeHostKitProbe {
 		}
 	}
 
-	private static func assertCaptureHostLivePrimaryInteractionState() {
-		var state = CaptureHostLivePrimaryInteractionState()
+	private static func assertPrimaryInteractionState() {
+		var state = PrimaryInteractionState()
 		guard state.hasInteraction == false, state.dragDistance(from: .zero) == 0 else {
 			fatalError("live primary state should start idle")
 		}
@@ -288,13 +288,13 @@ enum RsnapNativeHostKitProbe {
 		}
 
 		state.reset()
-		guard state == CaptureHostLivePrimaryInteractionState() else {
+		guard state == PrimaryInteractionState() else {
 			fatalError("live primary state should reset to idle")
 		}
 	}
 
-	private static func assertCaptureHostFrozenFirstDisplayHandoffState() {
-		var state = CaptureHostFrozenFirstDisplayHandoffState()
+	private static func assertDisplayHandoffState() {
+		var state = DisplayHandoffState()
 		guard
 			state.pending == false,
 			state.completionQueued == false,
@@ -318,7 +318,7 @@ enum RsnapNativeHostKitProbe {
 		state.markPendingFrameDisplayed()
 		guard
 			state.finish()
-				== CaptureHostFrozenFirstDisplayHandoffCompletion(
+				== DisplayHandoffCompletion(
 					startedAt: 4.25,
 					pendingFrameDisplayed: true,
 					deferredClassicToolbarGlass: false),
@@ -341,7 +341,7 @@ enum RsnapNativeHostKitProbe {
 			state.startedAt == 8.5,
 			state.allowsClassicToolbarGlass == false,
 			state.finish()
-				== CaptureHostFrozenFirstDisplayHandoffCompletion(
+				== DisplayHandoffCompletion(
 					startedAt: 8.5,
 					pendingFrameDisplayed: false,
 					deferredClassicToolbarGlass: true),
@@ -369,13 +369,13 @@ enum RsnapNativeHostKitProbe {
 		}
 
 		state.reset()
-		guard state == CaptureHostFrozenFirstDisplayHandoffState() else {
+		guard state == DisplayHandoffState() else {
 			fatalError("frozen first-display handoff should reset to idle")
 		}
 	}
 
-	private static func assertCaptureHostScrollToolbarBackdropState() {
-		var state = CaptureHostScrollToolbarBackdropState()
+	private static func assertToolbarBackdropState() {
+		var state = ToolbarBackdropState()
 		guard
 			let firstCapture = state.beginCapture(
 				now: 10,
@@ -411,10 +411,10 @@ enum RsnapNativeHostKitProbe {
 		guard
 			state.recordChange(signature: nil, now: 10.4) == nil,
 			state.recordChange(signature: 42, now: 11)
-				== CaptureHostScrollToolbarBackdropChange(count: 1, gapMilliseconds: nil),
+				== ToolbarBackdropChange(count: 1, gapMilliseconds: nil),
 			state.recordChange(signature: 42, now: 11.2) == nil,
 			state.recordChange(signature: 43, now: 12)
-				== CaptureHostScrollToolbarBackdropChange(count: 2, gapMilliseconds: 1_000)
+				== ToolbarBackdropChange(count: 2, gapMilliseconds: 1_000)
 		else {
 			fatalError("scroll toolbar backdrop state should record signature changes")
 		}
@@ -424,13 +424,13 @@ enum RsnapNativeHostKitProbe {
 		state.updateActiveFrame(frame, globalFrame: globalFrame)
 		guard
 			state.beginRefresh(now: 12, interval: 0.5)
-				== CaptureHostScrollToolbarBackdropRefresh(
+				== ToolbarBackdropRefresh(
 					gapMilliseconds: nil,
 					activeFrame: frame,
 					activeGlobalFrame: globalFrame),
 			state.beginRefresh(now: 12.25, interval: 0.5) == nil,
 			state.beginRefresh(now: 12.5, interval: 0.5)
-				== CaptureHostScrollToolbarBackdropRefresh(
+				== ToolbarBackdropRefresh(
 					gapMilliseconds: 500,
 					activeFrame: frame,
 					activeGlobalFrame: globalFrame)
@@ -471,7 +471,7 @@ enum RsnapNativeHostKitProbe {
 		}
 	}
 
-	private static func assertCaptureHostScrollToolbarBackdropWorker() {
+	private static func assertToolbarBackdropWorker() {
 		let liveRegion = RGBARegionSnapshot(
 			width: 2,
 			height: 1,
@@ -482,9 +482,9 @@ enum RsnapNativeHostKitProbe {
 			height: 1,
 			rgba: Data([8, 7, 6, 5, 4, 3, 2, 1])
 		)
-		let liveSignature = CaptureHostScrollToolbarBackdropWorker.signature(liveRegion)
+		let liveSignature = ToolbarBackdropWorker.signature(liveRegion)
 		let fallbackSignature =
-			CaptureHostScrollToolbarBackdropWorker.signature(fallbackRegion)
+			ToolbarBackdropWorker.signature(fallbackRegion)
 		let freshFrame = RGBARegionFrameSnapshot(
 			frameSequence: 9,
 			frameAgeMicroseconds: 10,
@@ -492,10 +492,10 @@ enum RsnapNativeHostKitProbe {
 		)
 		let fallbackImage = makeProbeImage()
 		var fallbackCalls = 0
-		let fallbackResult = CaptureHostScrollToolbarBackdropWorker.captureResult(
+		let fallbackResult = ToolbarBackdropWorker.captureResult(
 			rawFrame: freshFrame,
 			maximumLiveFrameAgeMicroseconds: 10,
-			capture: CaptureHostScrollToolbarBackdropCaptureStart(
+			capture: ToolbarBackdropCaptureStart(
 				generation: 1,
 				afterFrameSequence: 3,
 				previousSignature: liveSignature,
@@ -517,14 +517,14 @@ enum RsnapNativeHostKitProbe {
 		}
 
 		fallbackCalls = 0
-		let staleResult = CaptureHostScrollToolbarBackdropWorker.captureResult(
+		let staleResult = ToolbarBackdropWorker.captureResult(
 			rawFrame: RGBARegionFrameSnapshot(
 				frameSequence: 10,
 				frameAgeMicroseconds: 11,
 				region: liveRegion
 			),
 			maximumLiveFrameAgeMicroseconds: 10,
-			capture: CaptureHostScrollToolbarBackdropCaptureStart(
+			capture: ToolbarBackdropCaptureStart(
 				generation: 2,
 				afterFrameSequence: 9,
 				previousSignature: nil,
@@ -541,7 +541,7 @@ enum RsnapNativeHostKitProbe {
 			staleResult.patch == nil,
 			staleResult.frameSequence == 10,
 			staleResult.signature == nil,
-			CaptureHostScrollToolbarBackdropWorker.frameIsFresh(
+			ToolbarBackdropWorker.frameIsFresh(
 				freshFrame,
 				maximumAgeMicroseconds: 10
 			)
@@ -550,8 +550,8 @@ enum RsnapNativeHostKitProbe {
 		}
 	}
 
-	private static func assertCaptureHostAnnotationStyleWheelGate() {
-		var gate = CaptureHostAnnotationStyleWheelGate()
+	private static func assertAnnotationStyleWheelGate() {
+		var gate = AnnotationStyleWheelGate()
 		guard
 			gate.steps(
 				timestamp: 1,
@@ -649,8 +649,8 @@ enum RsnapNativeHostKitProbe {
 		}
 	}
 
-	private static func assertCaptureHostToolbarHoverState() {
-		var state = CaptureHostToolbarHoverState()
+	private static func assertToolbarHoverState() {
+		var state = ToolbarHoverState()
 		guard state.isActive == false, state.clear() == false else {
 			fatalError("toolbar hover state should start idle")
 		}
@@ -682,13 +682,13 @@ enum RsnapNativeHostKitProbe {
 			state.toolbarAction == nil,
 			state.annotationStyleAction == .decreaseSize,
 			state.clear(),
-			state == CaptureHostToolbarHoverState()
+			state == ToolbarHoverState()
 		else {
 			fatalError("toolbar hover state should switch and clear hover targets")
 		}
 	}
 
-	private static func assertCaptureHostLiveSampleCachePointMatching() {
+	private static func assertLiveSampleCachePointMatching() {
 		let currentRgb = LiveRgbSample(
 			rgb: RGBSample(r: 1, g: 2, b: 3),
 			capturedAtUptime: ProcessInfo.processInfo.systemUptime,
@@ -701,7 +701,7 @@ enum RsnapNativeHostKitProbe {
 			source: "probe-stale"
 		)
 		let loupePatch = makeProbeImage()
-		var cache = CaptureHostLiveSampleCache()
+		var cache = LiveSampleCache()
 		cache.seedChrome(LiveChromeSample(rgb: currentRgb, loupePatch: nil), point: .zero)
 		cache.seedRgb(currentRgb, point: .zero)
 		guard
@@ -731,18 +731,18 @@ enum RsnapNativeHostKitProbe {
 		}
 
 		guard
-			CaptureHostLiveSampleCache.pointsMatch(nil, nil),
-			CaptureHostLiveSampleCache.pointsMatch(CGPoint(x: 10, y: 20), nil) == false,
-			CaptureHostLiveSampleCache.pointsMatch(nil, CGPoint(x: 10, y: 20)) == false,
-			CaptureHostLiveSampleCache.pointsMatch(
+			LiveSampleCache.pointsMatch(nil, nil),
+			LiveSampleCache.pointsMatch(CGPoint(x: 10, y: 20), nil) == false,
+			LiveSampleCache.pointsMatch(nil, CGPoint(x: 10, y: 20)) == false,
+			LiveSampleCache.pointsMatch(
 				CGPoint(x: 10, y: 20),
 				CGPoint(x: 10.5, y: 19.5)
 			),
-			CaptureHostLiveSampleCache.pointsMatch(
+			LiveSampleCache.pointsMatch(
 				CGPoint(x: 10, y: 20),
 				CGPoint(x: 10.51, y: 20)
 			) == false,
-			CaptureHostLiveSampleCache.pointsMatch(
+			LiveSampleCache.pointsMatch(
 				CGPoint(x: 10, y: 20),
 				CGPoint(x: 10, y: 19.49)
 			) == false
@@ -1398,9 +1398,9 @@ enum RsnapNativeHostKitProbe {
 
 private final class PointerDispatchProbeRecorder: @unchecked Sendable {
 	private let lock = NSLock()
-	private var events: [CaptureHostPointerDispatchEvent] = []
+	private var events: [PointerDispatchEvent] = []
 
-	func append(_ event: CaptureHostPointerDispatchEvent) {
+	func append(_ event: PointerDispatchEvent) {
 		lock.withLock {
 			events.append(event)
 		}
@@ -1412,7 +1412,7 @@ private final class PointerDispatchProbeRecorder: @unchecked Sendable {
 		}
 	}
 
-	func snapshot() -> [CaptureHostPointerDispatchEvent] {
+	func snapshot() -> [PointerDispatchEvent] {
 		lock.withLock {
 			events
 		}

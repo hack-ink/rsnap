@@ -74,8 +74,8 @@ final class CaptureSessionController: NSObject {
 		label: "ink.hack.rsnap.frozen-image-render",
 		qos: .userInitiated
 	)
-	let textRecognitionEngine = NativeTextRecognitionEngine()
-	let frozenPreparedExportStore = FrozenPreparedExportStore()
+	let textRecognitionEngine = TextRecognitionEngine()
+	let frozenPreparedExportStore = PreparedExportStore()
 	let frozenPreparedRecognizeTextImageStore = FrozenPreparedRecognizeTextImageStore()
 	let captureSuccessSound = CaptureSuccessSound.load()
 	let ocrCompletionSound = OcrCompletionSound.load()

@@ -179,7 +179,7 @@ struct NativeScrollCaptureState {
 	var exportRevision: UInt64 = 0
 	var lastStreamFrameSequence: UInt64 = 0
 	var lastQueuedStreamFrameSequence: UInt64 = 0
-	var pendingSampleFrames: [NativeScrollCaptureSampleFrame] = []
+	var pendingSampleFrames: [ScrollCaptureSampleFrame] = []
 	var lastMissingSampleStatusUptime: TimeInterval = 0
 	var lastForwardedWheelUptime: TimeInterval = 0
 	var lastObservedWheelUptime: TimeInterval = 0
