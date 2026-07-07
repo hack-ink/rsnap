@@ -95,6 +95,7 @@ extension CaptureHostView {
 			return false
 		}
 		cancelFrozenMouseReleaseWatchdog()
+		cancelQueuedPointerDispatch()
 		controller?.completeFrozenInteraction(at: point)
 		syncVisibleCursor()
 		return true
@@ -231,6 +232,7 @@ extension CaptureHostView {
 				captureID: controller?.activeTelemetryCaptureID ?? 0,
 				detail: "x=\(Int(point.x.rounded())) y=\(Int(point.y.rounded()))"
 			)
+			cancelQueuedPointerDispatch()
 			controller?.completeFrozenInteraction(at: point)
 			syncVisibleCursor()
 			return false
@@ -251,7 +253,7 @@ extension CaptureHostView {
 		)
 	}
 
-	private func cancelQueuedPointerDispatch() {
+	func cancelQueuedPointerDispatch() {
 		pointerDispatchQueue.cancel()
 	}
 }

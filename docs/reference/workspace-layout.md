@@ -262,8 +262,8 @@ The main host-kit files are split by responsibility:
   seed-patch cache, active frame, refresh cadence, and change-count state
 - `CaptureHostScrollToolbarBackdropWorker.swift`: scroll toolbar backdrop live-frame freshness,
   signature hashing, fallback capture selection, and capture result shaping
-- `CaptureHostView.swift`: AppKit view orchestration, hit testing, and frozen presentation
-  rendering
+- `CaptureHostView.swift`: AppKit view orchestration, hit testing, frozen presentation rendering,
+  and dirty-region redraw narrowing for active frozen selection transforms
 - `CaptureHostMaterialViewCoordinator.swift`: Liquid Glass/material subview ownership, classic glass
   patch resolution, and scroll-toolbar backdrop refresh scheduling plus view installation
 - `CaptureHostGlassPatchResolver.swift`: classic glass patch cache lookup, frozen display crop
@@ -294,7 +294,8 @@ The main host-kit files are split by responsibility:
 - `CaptureHostMouseReleaseRecovery.swift`: capture-host local mouse-up monitor and live/frozen
   release-watchdog scheduling for AppKit interactions whose mouse-up event can be missed
 - `CaptureHostPointerDispatch.swift`: capture-host pointer dispatch events, a shared delivery queue
-  with per-track throttling state, and AppKit-to-controller pointer delivery
+  with per-track throttling state, and AppKit-to-controller pointer delivery for live drag and
+  frozen selection-transform drag
 - `CaptureHostCursorOwner.swift`: shared native cursor-owner helper for applying and clearing the
   current AppKit cursor across ordinary capture views without owning an `NSCursor` push stack
 - `CapturePointerAccentLayer.swift`: shared AppKit layer for ordinary and quick screenshot
