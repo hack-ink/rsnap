@@ -188,6 +188,23 @@ Current coarse smoke surfaces:
   and content draw, self-screenshot readiness, no pending-frame/no-scrim-drop flash, and Liquid
   Glass versus Classic Glass material contract
 
+### Scenario 2a: frozen selection transform drag
+
+Surface:
+- frozen selection chrome while moving or resizing an editable frozen selection
+- the frozen toolbar and its material/content views while they follow the active selection
+
+Required behavior:
+- repeated transform samples that clamp to the same selection rectangle must not refresh the overlay
+- pointer dispatch must keep drag delivery independent from hover delivery and must drop stale
+  queued hover work when active drag input arrives
+- toolbar movement caused by pure frame translation should move existing AppKit views/layers; it
+  should not synchronously redraw toolbar content, relayout Liquid Glass, or resample scroll toolbar
+  backdrops unless content, size, material settings, or first-visible state changed
+- the active overlay window invalidates only its local dirty region during a transform; selection
+  movement outside a given window must not force that window to perform a full redraw or imply
+  cross-screen selection transform support
+
 ### Scenario 3: scroll-capture and image-processing hot paths
 
 Surface:

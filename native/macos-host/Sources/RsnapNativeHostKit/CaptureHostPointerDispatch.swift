@@ -32,79 +32,93 @@ package enum CaptureHostPointerDispatchTiming {
 }
 
 @MainActor
-final class CaptureHostPointerDispatchQueue {
-	private var queuedEvent: CaptureHostPointerDispatchEvent?
-	private var queuedWorkItem: DispatchWorkItem?
-	private var lastHoverDispatchUptime: TimeInterval = 0
-	private var lastDragDispatchUptime: TimeInterval = 0
+package final class CaptureHostPointerDispatchQueue {
+	private final class TrackState {
+		var queuedEvent: CaptureHostPointerDispatchEvent?
+		var queuedWorkItem: DispatchWorkItem?
+		var lastDispatchUptime: TimeInterval = 0
+	}
+
+	private let hoverState = TrackState()
+	private let dragState = TrackState()
 	private let targetInterval: () -> TimeInterval
 	private let dispatchEvent: (CaptureHostPointerDispatchEvent) -> Void
+	private let schedule: (TimeInterval, DispatchWorkItem) -> Void
 
-	init(
+	package init(
 		targetInterval: @escaping () -> TimeInterval,
-		dispatchEvent: @escaping (CaptureHostPointerDispatchEvent) -> Void
+		dispatchEvent: @escaping (CaptureHostPointerDispatchEvent) -> Void,
+		schedule: @escaping (TimeInterval, DispatchWorkItem) -> Void = { delay, workItem in
+			if delay <= 0 {
+				DispatchQueue.main.async(execute: workItem)
+			} else {
+				DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+			}
+		}
 	) {
 		self.targetInterval = targetInterval
 		self.dispatchEvent = dispatchEvent
+		self.schedule = schedule
 	}
 
-	func enqueue(_ event: CaptureHostPointerDispatchEvent) {
+	package func enqueue(_ event: CaptureHostPointerDispatchEvent) {
+		if event.track == .drag {
+			cancel(hoverState)
+		}
+		let state = state(for: event.track)
 		let now = ProcessInfo.processInfo.systemUptime
 		let delay = CaptureHostPointerDispatchTiming.delay(
 			now: now,
 			targetInterval: targetInterval(),
-			lastDispatchUptime: lastDispatchUptime(for: event)
+			lastDispatchUptime: state.lastDispatchUptime
 		)
 
-		queuedEvent = event
-		guard queuedWorkItem == nil else {
+		state.queuedEvent = event
+		guard state.queuedWorkItem == nil else {
 			return
 		}
 
-		let workItem = DispatchWorkItem { [weak self] in
+		var scheduledWorkItem: DispatchWorkItem?
+		let workItem = DispatchWorkItem { [weak self, weak state] in
 			guard let self else {
 				return
 			}
-			self.queuedWorkItem = nil
-			guard let event = self.queuedEvent else {
+			guard let state else {
 				return
 			}
-			self.queuedEvent = nil
-			self.setLastDispatchUptime(ProcessInfo.processInfo.systemUptime, for: event)
+			guard state.queuedWorkItem === scheduledWorkItem else {
+				return
+			}
+			state.queuedWorkItem = nil
+			guard let event = state.queuedEvent else {
+				return
+			}
+			state.queuedEvent = nil
 			self.dispatchEvent(event)
+			state.lastDispatchUptime = ProcessInfo.processInfo.systemUptime
 		}
-		queuedWorkItem = workItem
-		if delay <= 0 {
-			DispatchQueue.main.async(execute: workItem)
-		} else {
-			DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
-		}
+		scheduledWorkItem = workItem
+		state.queuedWorkItem = workItem
+		schedule(delay, workItem)
 	}
 
-	func cancel() {
-		queuedWorkItem?.cancel()
-		queuedWorkItem = nil
-		queuedEvent = nil
+	package func cancel() {
+		cancel(hoverState)
+		cancel(dragState)
 	}
 
-	private func lastDispatchUptime(for event: CaptureHostPointerDispatchEvent) -> TimeInterval {
-		switch event.track {
+	private func state(for track: CaptureHostPointerDispatchTrack) -> TrackState {
+		switch track {
 		case .hover:
-			return lastHoverDispatchUptime
+			return hoverState
 		case .drag:
-			return lastDragDispatchUptime
+			return dragState
 		}
 	}
 
-	private func setLastDispatchUptime(
-		_ uptime: TimeInterval,
-		for event: CaptureHostPointerDispatchEvent
-	) {
-		switch event.track {
-		case .hover:
-			lastHoverDispatchUptime = uptime
-		case .drag:
-			lastDragDispatchUptime = uptime
-		}
+	private func cancel(_ state: TrackState) {
+		state.queuedWorkItem?.cancel()
+		state.queuedWorkItem = nil
+		state.queuedEvent = nil
 	}
 }

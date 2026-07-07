@@ -102,7 +102,7 @@ final class CaptureHostView: NSView {
 		let previousSettings = self.settings
 		let previousMode = self.scene.mode
 		let transitioningToFrozen = previousMode == .live && scene.mode == .frozen
-		let frozenTransformDirtyRect = frozenSelectionTransformDirtyRect(
+		let frozenTransformInvalidation = frozenSelectionTransformInvalidation(
 			previousScene: previousScene,
 			previousChrome: previousChrome,
 			previousSettings: previousSettings,
@@ -188,48 +188,56 @@ final class CaptureHostView: NSView {
 				if previousMode == .live {
 					stopLivePresentationNow()
 				}
-				if let frozenTransformDirtyRect {
-					setNeedsDisplay(frozenTransformDirtyRect)
-				} else {
+				switch frozenTransformInvalidation {
+				case .rect(let dirtyRect):
+					setNeedsDisplay(dirtyRect)
+				case .none:
+					break
+				case .unavailable:
 					needsDisplay = true
 				}
 			}
 		}
 	}
 
-	private func frozenSelectionTransformDirtyRect(
+	private enum FrozenSelectionTransformInvalidation {
+		case unavailable
+		case none
+		case rect(CGRect)
+	}
+
+	private func frozenSelectionTransformInvalidation(
 		previousScene: SceneSnapshot,
 		previousChrome: CaptureChromeState,
 		previousSettings: NativeHostSettings,
 		nextScene: SceneSnapshot,
 		nextChrome: CaptureChromeState,
 		nextSettings: NativeHostSettings
-	) -> CGRect? {
+	) -> FrozenSelectionTransformInvalidation {
 		guard previousScene.mode == .frozen, nextScene.mode == .frozen else {
-			return nil
+			return .unavailable
 		}
 		guard previousSettings == nextSettings else {
-			return nil
+			return .unavailable
 		}
 		guard
 			previousChrome.frozenSelectionInteraction != nil
 				|| nextChrome.frozenSelectionInteraction != nil
 		else {
-			return nil
+			return .unavailable
 		}
 		guard previousChrome.frozenDisplayFrame == nextChrome.frozenDisplayFrame else {
-			return nil
+			return .unavailable
 		}
-		guard
-			let previousSelection = localRect(
-				from: previousChrome.frozenSelectionSnapshot ?? previousScene.frozenSelection),
-			let nextSelection = localRect(
-				from: nextChrome.frozenSelectionSnapshot ?? nextScene.frozenSelection)
-		else {
-			return nil
+		let previousSelection = localRect(
+			from: previousChrome.frozenSelectionSnapshot ?? previousScene.frozenSelection)
+		let nextSelection = localRect(
+			from: nextChrome.frozenSelectionSnapshot ?? nextScene.frozenSelection)
+		guard previousSelection != nil || nextSelection != nil else {
+			return .none
 		}
 
-		var dirtyRect = previousSelection.union(nextSelection)
+		var dirtyRect = previousSelection ?? nextSelection ?? .null
 		if let previousToolbarFrame = frozenToolbarFrame(
 			for: previousSelection,
 			scene: previousScene,
@@ -237,6 +245,9 @@ final class CaptureHostView: NSView {
 			settings: previousSettings
 		) {
 			dirtyRect = dirtyRect.union(previousToolbarFrame)
+		}
+		if let nextSelection {
+			dirtyRect = dirtyRect.union(nextSelection)
 		}
 		if let nextToolbarFrame = frozenToolbarFrame(
 			for: nextSelection,
@@ -247,16 +258,19 @@ final class CaptureHostView: NSView {
 			dirtyRect = dirtyRect.union(nextToolbarFrame)
 		}
 		let clippedDirtyRect = dirtyRect.insetBy(dx: -96, dy: -96).intersection(bounds)
-		return clippedDirtyRect.isNull ? nil : clippedDirtyRect
+		return clippedDirtyRect.isNull ? .none : .rect(clippedDirtyRect)
 	}
 
 	private func frozenToolbarFrame(
-		for selection: CGRect,
+		for selection: CGRect?,
 		scene: SceneSnapshot,
 		chrome: CaptureChromeState,
 		settings: NativeHostSettings
 	) -> CGRect? {
-		FrozenToolbarLayoutPlanner.layout(
+		guard let selection else {
+			return nil
+		}
+		return FrozenToolbarLayoutPlanner.layout(
 			selection: selection,
 			bounds: bounds,
 			prefersTopPlacement: settings.toolbarPlacement == .top,
