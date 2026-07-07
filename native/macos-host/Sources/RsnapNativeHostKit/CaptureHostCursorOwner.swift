@@ -9,6 +9,9 @@ final class CaptureHostCursorOwner {
 	}
 
 	func set(_ presentation: CaptureHostCursorPresentation) {
+		guard appliedPresentation != presentation else {
+			return
+		}
 		CaptureHostCursorSupport.cursor(for: presentation).set()
 		appliedPresentation = presentation
 	}

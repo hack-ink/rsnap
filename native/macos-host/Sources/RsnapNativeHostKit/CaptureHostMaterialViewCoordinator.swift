@@ -19,6 +19,7 @@ final class CaptureHostMaterialViewCoordinator {
 	private var toolbarLiquidGlassBackdropView: NSImageView?
 	private var toolbarLiquidGlassView: NSView?
 	private var toolbarLiquidGlassContentView: FrozenToolbarRenderView?
+	private var frozenToolbarLiquidGlassSettings: NativeHostSettings?
 	private var frozenToolbarLiquidGlassVisible = false
 	private var frozenToolbarLiquidGlassContentDrawn = false
 	private let scrollToolbarBackdropRefreshGapMetric = NativeHostTelemetry.distribution(
@@ -298,6 +299,7 @@ final class CaptureHostMaterialViewCoordinator {
 	private func prewarmFrozenToolbarLiquidGlassViewIfNeeded() {
 		if let toolbarLiquidGlassView {
 			LiveChromeLiquidGlassBridge.update(toolbarLiquidGlassView, settings: settings)
+			frozenToolbarLiquidGlassSettings = settings
 			ensureFrozenToolbarContentView(above: toolbarLiquidGlassView)
 			return
 		}
@@ -309,6 +311,7 @@ final class CaptureHostMaterialViewCoordinator {
 			zPosition: Self.frozenToolbarLiquidGlassZ
 		)
 		LiveChromeLiquidGlassBridge.update(createdView, settings: settings)
+		frozenToolbarLiquidGlassSettings = settings
 		createdView.frame = .zero
 		createdView.isHidden = true
 		hostView.addSubview(createdView, positioned: .below, relativeTo: nil)
@@ -356,7 +359,8 @@ final class CaptureHostMaterialViewCoordinator {
 
 	private func updateFrozenToolbarBackdrop(
 		for toolbarFrame: CGRect,
-		preparingFirstVisibleToolbar: Bool
+		preparingFirstVisibleToolbar: Bool,
+		capturesUpdates: Bool = true
 	) {
 		guard chrome.scrollMinimapPreview != nil,
 			let globalFrame = globalRect(from: toolbarFrame)
@@ -389,10 +393,12 @@ final class CaptureHostMaterialViewCoordinator {
 			backdropView.image = NSImage(cgImage: seedPatch, size: toolbarFrame.size)
 			backdropView.isHidden = preparingFirstVisibleToolbar
 		}
-		scheduleScrollToolbarBackdropCapture(
-			toolbarFrame: toolbarFrame,
-			globalFrame: globalFrame
-		)
+		if capturesUpdates {
+			scheduleScrollToolbarBackdropCapture(
+				toolbarFrame: toolbarFrame,
+				globalFrame: globalFrame
+			)
+		}
 	}
 
 	private func scheduleScrollToolbarBackdropCapture(
@@ -504,7 +510,9 @@ final class CaptureHostMaterialViewCoordinator {
 	}
 
 	func refreshScrollCaptureToolbarBackdropNow() {
-		guard settings.usesLiquidHudGlass, chrome.scrollMinimapPreview != nil else {
+		guard settings.usesLiquidHudGlass, chrome.scrollMinimapPreview != nil,
+			chrome.frozenSelectionInteraction == nil
+		else {
 			return
 		}
 		guard let state = controller?.scrollCaptureState,
@@ -538,6 +546,7 @@ final class CaptureHostMaterialViewCoordinator {
 		guard
 			scene.mode == .frozen,
 			settings.usesLiquidHudGlass,
+			chrome.frozenSelectionInteraction == nil,
 			frozenToolbarLiquidGlassVisible,
 			frozenToolbarLiquidGlassContentDrawn,
 			let toolbarLiquidGlassView,
@@ -578,14 +587,26 @@ final class CaptureHostMaterialViewCoordinator {
 			hideFrozenToolbarLiquidGlassView()
 			return
 		}
-		updateLiveLiquidGlassView(
-			&toolbarLiquidGlassView,
-			frame: layout.frame,
-			zPosition: Self.frozenToolbarLiquidGlassZ
-		)
+		let activelyTransformingSelection = chrome.frozenSelectionInteraction != nil
+		if activelyTransformingSelection,
+			toolbarLiquidGlassView != nil,
+			frozenToolbarLiquidGlassVisible,
+			frozenToolbarLiquidGlassContentDrawn,
+			frozenToolbarLiquidGlassSettings == settings
+		{
+			moveExistingLiveLiquidGlassView(toolbarLiquidGlassView, frame: layout.frame)
+		} else {
+			updateLiveLiquidGlassView(
+				&toolbarLiquidGlassView,
+				frame: layout.frame,
+				zPosition: Self.frozenToolbarLiquidGlassZ
+			)
+			frozenToolbarLiquidGlassSettings = settings
+		}
 		guard let toolbarLiquidGlassView else {
 			frozenToolbarLiquidGlassVisible = false
 			frozenToolbarLiquidGlassContentDrawn = false
+			frozenToolbarLiquidGlassSettings = nil
 			toolbarLiquidGlassContentView?.isHidden = true
 			if wasVisible {
 				hostView.needsDisplay = true
@@ -600,13 +621,18 @@ final class CaptureHostMaterialViewCoordinator {
 		}
 		updateFrozenToolbarBackdrop(
 			for: layout.frame,
-			preparingFirstVisibleToolbar: preparingFirstVisibleToolbar
+			preparingFirstVisibleToolbar: preparingFirstVisibleToolbar,
+			capturesUpdates: !activelyTransformingSelection || preparingFirstVisibleToolbar
 		)
 		let contentView = ensureFrozenToolbarContentView(above: toolbarLiquidGlassView)
-		let frameChanged = contentView.frame != layout.frame
-		if contentView.frame != layout.frame {
+		let previousContentFrame = contentView.frame
+		let frameChanged = previousContentFrame != layout.frame
+		let sizeChanged = previousContentFrame.size != layout.frame.size
+		if frameChanged {
 			contentView.frame = layout.frame
-			contentView.needsDisplay = true
+			if sizeChanged {
+				contentView.needsDisplay = true
+			}
 		}
 		contentView.isHidden = preparingFirstVisibleToolbar
 		let changed = contentView.update(
@@ -634,7 +660,7 @@ final class CaptureHostMaterialViewCoordinator {
 		if changed {
 			contentView.needsDisplay = true
 		}
-		if frameChanged || changed || !wasVisible || !frozenToolbarLiquidGlassContentDrawn {
+		if sizeChanged || changed || !wasVisible || !frozenToolbarLiquidGlassContentDrawn {
 			contentView.display()
 		}
 		if preparingFirstVisibleToolbar {
@@ -658,6 +684,7 @@ final class CaptureHostMaterialViewCoordinator {
 		let wasVisible = frozenToolbarLiquidGlassVisible
 		frozenToolbarLiquidGlassVisible = false
 		frozenToolbarLiquidGlassContentDrawn = false
+		frozenToolbarLiquidGlassSettings = nil
 		scrollToolbarBackdropState.resetAndInvalidateCaptures()
 		toolbarLiquidGlassBackdropView?.isHidden = true
 		toolbarLiquidGlassBackdropView?.image = nil
