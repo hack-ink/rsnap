@@ -6,7 +6,6 @@ import Darwin
 import Foundation
 import QuartzCore
 import RsnapHostBridge
-import Vision
 
 @MainActor
 final class CaptureSessionController: NSObject {
@@ -75,6 +74,7 @@ final class CaptureSessionController: NSObject {
 		label: "ink.hack.rsnap.frozen-image-render",
 		qos: .userInitiated
 	)
+	let textRecognitionEngine = NativeTextRecognitionEngine()
 	let frozenPreparedExportStore = FrozenPreparedExportStore()
 	let frozenPreparedRecognizeTextImageStore = FrozenPreparedRecognizeTextImageStore()
 	let captureSuccessSound = CaptureSuccessSound.load()
@@ -121,6 +121,7 @@ final class CaptureSessionController: NSObject {
 			name: NativeHostSettingsStore.didChangeNotification,
 			object: settingsStore
 		)
+		textRecognitionEngine.prewarm(reason: "session_controller_init")
 	}
 
 	deinit {
