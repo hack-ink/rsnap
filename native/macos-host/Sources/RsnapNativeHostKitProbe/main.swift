@@ -21,6 +21,7 @@ enum RsnapNativeHostKitProbe {
 		assertImmediateInstallGateWaitsForCaptureIdle()
 		assertCaptureHostCursorMapping()
 		assertCaptureHostPointerDispatchSupport()
+		assertCaptureHostPointerDispatchQueueSemantics()
 		assertCaptureHostLivePrimaryInteractionState()
 		assertCaptureHostFrozenFirstDisplayHandoffState()
 		assertCaptureHostScrollToolbarBackdropState()
@@ -195,6 +196,55 @@ enum RsnapNativeHostKitProbe {
 				lastDispatchUptime: 9.50) == 0
 		else {
 			fatalError("capture host pointer dispatch support should preserve throttling")
+		}
+	}
+
+	private static func assertCaptureHostPointerDispatchQueueSemantics() {
+		let recorder = PointerDispatchProbeRecorder()
+		MainActor.assumeIsolated {
+			var scheduledWorkItems: [DispatchWorkItem] = []
+			let queue = CaptureHostPointerDispatchQueue(
+				targetInterval: { 3_600 },
+				dispatchEvent: { recorder.append($0) },
+				schedule: { _, workItem in scheduledWorkItems.append(workItem) }
+			)
+			queue.enqueue(.moved(CGPoint(x: 1, y: 1)))
+			scheduledWorkItems.removeFirst().perform()
+			recorder.removeAll()
+			queue.enqueue(.moved(CGPoint(x: 3, y: 3)))
+			queue.enqueue(.frozenSelectionDragged(CGPoint(x: 2, y: 2)))
+			for workItem in scheduledWorkItems {
+				workItem.perform()
+			}
+		}
+		guard recorder.snapshot() == [.frozenSelectionDragged(CGPoint(x: 2, y: 2))] else {
+			fatalError("drag dispatch should cancel stale queued hover events")
+		}
+
+		recorder.removeAll()
+		MainActor.assumeIsolated {
+			var scheduledWorkItems: [DispatchWorkItem] = []
+			let queue = CaptureHostPointerDispatchQueue(
+				targetInterval: { 3_600 },
+				dispatchEvent: { recorder.append($0) },
+				schedule: { _, workItem in scheduledWorkItems.append(workItem) }
+			)
+			queue.enqueue(.frozenSelectionDragged(CGPoint(x: 3, y: 3)))
+			scheduledWorkItems.removeFirst().perform()
+			recorder.removeAll()
+			queue.enqueue(.frozenSelectionDragged(CGPoint(x: 5, y: 5)))
+			queue.enqueue(.moved(CGPoint(x: 4, y: 4)))
+			for workItem in scheduledWorkItems {
+				workItem.perform()
+			}
+		}
+		guard
+			recorder.snapshot() == [
+				.frozenSelectionDragged(CGPoint(x: 5, y: 5)),
+				.moved(CGPoint(x: 4, y: 4)),
+			]
+		else {
+			fatalError("hover dispatch should not cancel queued drag events")
 		}
 	}
 
@@ -1343,5 +1393,28 @@ enum RsnapNativeHostKitProbe {
 
 	private static func rowIndex(fromBottom y: Int, height: Int) -> Int {
 		max(0, min(height - 1, height - y - 1))
+	}
+}
+
+private final class PointerDispatchProbeRecorder: @unchecked Sendable {
+	private let lock = NSLock()
+	private var events: [CaptureHostPointerDispatchEvent] = []
+
+	func append(_ event: CaptureHostPointerDispatchEvent) {
+		lock.withLock {
+			events.append(event)
+		}
+	}
+
+	func removeAll() {
+		lock.withLock {
+			events.removeAll()
+		}
+	}
+
+	func snapshot() -> [CaptureHostPointerDispatchEvent] {
+		lock.withLock {
+			events
+		}
 	}
 }

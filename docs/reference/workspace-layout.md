@@ -294,8 +294,8 @@ The main host-kit files are split by responsibility:
 - `CaptureHostMouseReleaseRecovery.swift`: capture-host local mouse-up monitor and live/frozen
   release-watchdog scheduling for AppKit interactions whose mouse-up event can be missed
 - `CaptureHostPointerDispatch.swift`: capture-host pointer dispatch events, a shared delivery queue
-  with per-track throttling state, and AppKit-to-controller pointer delivery for live drag and
-  frozen selection-transform drag
+  with separate hover/drag queue state, drag-side queued-hover cancellation, and
+  AppKit-to-controller pointer delivery for live drag and frozen selection-transform drag
 - `CaptureHostCursorOwner.swift`: shared native cursor-owner helper for applying and clearing the
   current AppKit cursor across ordinary capture views without owning an `NSCursor` push stack
 - `CapturePointerAccentLayer.swift`: shared AppKit layer for ordinary and quick screenshot

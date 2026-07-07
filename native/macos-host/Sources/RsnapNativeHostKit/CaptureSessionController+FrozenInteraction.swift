@@ -189,9 +189,14 @@ extension CaptureSessionController {
 			pointerMoved(to: point)
 			return
 		}
-		if updateFrozenSelectionTransform(to: point) {
+		switch updateFrozenSelectionTransform(to: point) {
+		case .changed:
 			refreshOverlay()
 			return
+		case .unchanged:
+			return
+		case .inactive:
+			break
 		}
 		if chromeState.frozenOverlay.update(to: point, selection: selection) {
 			refreshOverlay()
@@ -260,19 +265,27 @@ extension CaptureSessionController {
 		return true
 	}
 
-	func updateFrozenSelectionTransform(to point: CGPoint) -> Bool {
+	private enum FrozenSelectionTransformUpdate {
+		case inactive
+		case unchanged
+		case changed
+	}
+
+	private func updateFrozenSelectionTransform(
+		to point: CGPoint
+	) -> FrozenSelectionTransformUpdate {
 		guard let interaction = chromeState.frozenSelectionInteraction else {
-			return false
+			return .inactive
 		}
 		guard let nextSelection = transformedFrozenSelection(interaction: interaction, point: point)
 		else {
-			return false
+			return .inactive
 		}
 		guard chromeState.frozenSelectionSnapshot != nextSelection else {
-			return true
+			return .unchanged
 		}
 		chromeState.frozenSelectionSnapshot = nextSelection
-		return true
+		return .changed
 	}
 
 	func completeFrozenSelectionTransform(at point: CGPoint) -> Bool {
