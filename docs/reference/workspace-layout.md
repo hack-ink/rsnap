@@ -5,7 +5,7 @@ type: "Reference"
 status: active
 authority: normative
 owner: hack-ink/rsnap
-last_verified: 2026-07-06
+last_verified: 2026-07-07
 ---
 # Workspace Layout Reference
 
@@ -295,8 +295,16 @@ The main host-kit files are split by responsibility:
   release-watchdog scheduling for AppKit interactions whose mouse-up event can be missed
 - `CaptureHostPointerDispatch.swift`: capture-host pointer dispatch events, a shared delivery queue
   with per-track throttling state, and AppKit-to-controller pointer delivery
+- `CaptureHostCursorOwner.swift`: shared native cursor-owner helper for applying and clearing the
+  current AppKit cursor across ordinary capture views without owning an `NSCursor` push stack
+- `CapturePointerAccentLayer.swift`: shared AppKit layer for ordinary and quick screenshot
+  native-cursor hotspot accent chrome
 - `CaptureHostView+InputRouting.swift`: capture-host AppKit mouse, wheel, key, cursor, toolbar
   shortcut, and pointer-dispatch routing into the session controller
+- `QuickScreenshotController.swift`: non-activating quick screenshot acquisition path. It owns
+  event-tap input interception and native-cursor companion halo feedback without making overlay
+  windows key, mouse-interactive, or activating the app, so transient target UI such as context
+  menus remains visible.
 - `CaptureHostView+LivePrimaryInteraction.swift`: capture-host live primary interaction release
   recovery, pointer-preview mutation, mouse-up monitor wiring, and release-watchdog orchestration
 - `CaptureHostView+LivePreview.swift`: capture-host live preview snapshots, HUD/loupe placement,
@@ -327,7 +335,9 @@ The main host-kit files are split by responsibility:
 - `CaptureGeometry.swift`, `CaptureHostAnnotationStyleWheelGate.swift`,
   `CaptureHostToolbarHoverState.swift`, `CaptureHostFrozenFirstDisplayHandoffState.swift`,
   `CaptureHostScrollToolbarBackdropState.swift`, `CaptureHostCursorSupport.swift`,
-  `CaptureHostScrollMinimapRenderer.swift`, `CaptureHostLiveSampleCache.swift`,
+  `CaptureHostCursorOwner.swift`, `CapturePointerAccentLayer.swift`,
+  `CaptureHostScrollMinimapRenderer.swift`,
+  `CaptureHostLiveSampleCache.swift`,
   `CaptureHostLiveSampleResolver.swift`, `CaptureHostLiveInputTelemetry.swift`,
   `CaptureHostLivePointerPreviewState.swift`, `CaptureHostLivePrimaryInteractionState.swift`,
   `CaptureHostMouseReleaseRecovery.swift`, `CaptureHostPointerDispatch.swift`,
@@ -336,8 +346,9 @@ The main host-kit files are split by responsibility:
   `LiveChromeRefreshTelemetryKey.swift`, and `NativeHostTextMetrics.swift`: focused support
   boundaries for shared capture geometry, frozen annotation-size wheel gating, frozen toolbar hover
   state, frozen first-display handoff state, scroll toolbar backdrop state, capture-host cursor
-  presentation and NSCursor adaptation, frozen minimap presentation, live sample reuse, live sample
-  resolution, live input telemetry, live pointer preview state, live primary interaction state,
+  presentation, AppKit cursor adaptation, shared screenshot pointer hotspot accent chrome, frozen minimap
+  presentation, live sample reuse, live sample resolution, live input telemetry, live pointer preview state,
+  live primary interaction state,
   AppKit mouse-release recovery, pointer dispatch queue throttling, Rust-backed frozen image
   effects, capture-host glass patch caching and blur/tint adaptation, frozen-frame pixel-buffer
   image/sampling adaptation, prepared export cache ownership, live-chrome telemetry identity, and

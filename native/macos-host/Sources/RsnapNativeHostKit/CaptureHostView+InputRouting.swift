@@ -8,7 +8,7 @@ extension CaptureHostView {
 		if scene.mode == .frozen {
 			frozenToolbar.refreshHoveredAction(for: event.locationInWindow)
 		}
-		applyVisibleCursorIfNeeded(currentCursorPresentation())
+		setVisibleCursor(currentCursorPresentation())
 	}
 
 	func routeMouseMoved(with event: NSEvent) {
@@ -25,10 +25,12 @@ extension CaptureHostView {
 			}
 			liveInputTelemetry.recordMouseEvent()
 			updateLivePointerPreview(to: point, rendersImmediately: true)
+			setVisibleCursor(currentCursorPresentation())
 			return
 		}
 		updateLivePointerPreview(to: point, rendersImmediately: false)
 		queuePointerEvent(.moved(point))
+		setVisibleCursor(currentCursorPresentation())
 	}
 
 	func routeMouseDragged(with event: NSEvent) {
@@ -50,6 +52,7 @@ extension CaptureHostView {
 			updateLivePointerPreview(to: point, rendersImmediately: false)
 			queuePointerEvent(
 				livePrimaryInteraction.dragExceededThreshold ? .liveDragged(point) : .moved(point))
+			setVisibleCursor(currentCursorPresentation())
 		} else {
 			let point = globalPoint(from: event)
 			if recoverReleasedFrozenInteractionIfNeeded(at: point) {
@@ -169,13 +172,12 @@ extension CaptureHostView {
 			return
 		}
 		guard cursorPresentation != lastCursorPresentation else {
+			setVisibleCursor(cursorPresentation)
 			return
 		}
 		lastCursorPresentation = cursorPresentation
 		window?.invalidateCursorRects(for: self)
-		if scene.mode == .frozen {
-			applyVisibleCursorIfNeeded(cursorPresentation)
-		}
+		setVisibleCursor(cursorPresentation)
 	}
 
 	func pointerDispatchInterval() -> TimeInterval {
@@ -277,6 +279,9 @@ extension CaptureHostView {
 		if toolbarHoverState.pointerOverToolbar || toolbarHoverState.toolbarAction != nil {
 			return .arrow
 		}
+		if scene.mode == .live {
+			return .arrow
+		}
 		if scene.mode == .frozen {
 			if let interaction = chrome.frozenSelectionInteraction {
 				return CaptureHostCursorSupport.presentation(
@@ -316,30 +321,18 @@ extension CaptureHostView {
 		return CaptureHostCursorSupport.presentation(for: scene.cursorIntent)
 	}
 
-	private func applyVisibleCursorIfNeeded(_ cursorPresentation: CaptureHostCursorPresentation) {
-		guard cursorPresentation != lastAppliedCursorPresentation else {
-			return
-		}
-		clearVisibleCursorOverride()
-		lastAppliedCursorPresentation = cursorPresentation
-		CaptureHostCursorSupport.cursor(for: cursorPresentation).push()
-		pushedCursorPresentation = cursorPresentation
+	private func setVisibleCursor(_ cursorPresentation: CaptureHostCursorPresentation) {
+		cursorOwner.set(cursorPresentation)
 	}
 
 	func forceVisibleCursorRefresh() {
 		lastCursorPresentation = nil
-		lastAppliedCursorPresentation = nil
 		clearVisibleCursorOverride()
 		syncVisibleCursor()
 	}
 
 	func clearVisibleCursorOverride() {
-		guard pushedCursorPresentation != nil else {
-			return
-		}
-		NSCursor.pop()
-		pushedCursorPresentation = nil
-		lastAppliedCursorPresentation = nil
+		cursorOwner.clear()
 	}
 
 	private func suppressLiveHoverChrome() {

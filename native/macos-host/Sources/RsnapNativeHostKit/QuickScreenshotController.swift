@@ -2,6 +2,7 @@ import AppKit
 @preconcurrency import CoreGraphics
 import Darwin
 import Foundation
+import QuartzCore
 
 struct QuickScreenshotDisplayFrame {
 	let displayID: CGDirectDisplayID
@@ -106,6 +107,7 @@ private final class QuickScreenshotAcquisitionController {
 	private static let eventMask =
 		(CGEventMask(1) << CGEventType.leftMouseDown.rawValue)
 		| (CGEventMask(1) << CGEventType.leftMouseDragged.rawValue)
+		| (CGEventMask(1) << CGEventType.mouseMoved.rawValue)
 		| (CGEventMask(1) << CGEventType.leftMouseUp.rawValue)
 		| (CGEventMask(1) << CGEventType.rightMouseDown.rawValue)
 		| (CGEventMask(1) << CGEventType.keyDown.rawValue)
@@ -200,11 +202,19 @@ private final class QuickScreenshotAcquisitionController {
 		case .rightMouseDown:
 			cancel(reason: "right_mouse")
 			return nil
+		case .mouseMoved:
+			let point = Self.appKitPoint(from: event)
+			overlayController?.updatePointer(point)
+			return Unmanaged.passUnretained(event)
 		case .leftMouseDown:
-			beginSelection(at: Self.appKitPoint(from: event))
+			let point = Self.appKitPoint(from: event)
+			overlayController?.updatePointer(point)
+			beginSelection(at: point)
 			return nil
 		case .leftMouseDragged:
-			updateSelection(to: Self.appKitPoint(from: event))
+			let point = Self.appKitPoint(from: event)
+			overlayController?.updatePointer(point)
+			updateSelection(to: point)
 			return nil
 		case .leftMouseUp:
 			finishSelection(at: Self.appKitPoint(from: event))
@@ -330,6 +340,7 @@ private final class QuickScreenshotAcquisitionController {
 				displayFrames: preparedDisplayFrames
 			)
 			overlayController.prepare()
+			overlayController.showArmed(pointer: NSEvent.mouseLocation)
 			self.overlayController = overlayController
 		}
 		let prepareMilliseconds = NativeHostTelemetry.milliseconds(since: prepareStartedAt)
@@ -462,6 +473,7 @@ private final class QuickScreenshotAcquisitionController {
 private final class QuickScreenshotSelectionOverlayController {
 	private let displayFrames: [QuickScreenshotDisplayFrame]
 	private var windows: [QuickScreenshotSelectionWindow] = []
+	private var activeSelectionWindow: QuickScreenshotSelectionWindow?
 
 	init(displayFrames: [QuickScreenshotDisplayFrame]) {
 		self.displayFrames = displayFrames
@@ -480,26 +492,54 @@ private final class QuickScreenshotSelectionOverlayController {
 
 	func show(initialSelection: CGRect?) {
 		prepare()
+		let focusedWindow =
+			initialSelection.flatMap { selection in
+				windows.first { $0.frame.intersects(selection) }
+			} ?? windows.first
+		activeSelectionWindow = focusedWindow
 		for window in windows {
-			window.selectionView.selection = initialSelection
-			window.selectionView.needsDisplay = true
+			window.selectionView.updateSelection(initialSelection)
 			window.orderFrontRegardless()
 			window.displayIfNeeded()
 		}
 	}
 
-	func update(selection: CGRect) {
+	func showArmed(pointer: CGPoint?) {
+		prepare()
+		activeSelectionWindow = nil
 		for window in windows {
-			window.selectionView.selection = selection
-			window.selectionView.needsDisplay = true
+			window.selectionView.updateSelection(nil)
+			window.selectionView.updatePointer(pointer)
+			window.orderFrontRegardless()
 			window.displayIfNeeded()
 		}
 	}
 
+	func updatePointer(_ pointer: CGPoint?) {
+		for window in windows {
+			window.selectionView.updatePointer(pointer)
+		}
+	}
+
+	func update(selection: CGRect) {
+		let targetWindow =
+			activeSelectionWindow
+			?? windows.first { $0.frame.intersects(selection) }
+			?? windows.first
+		activeSelectionWindow = targetWindow
+		guard let targetWindow else {
+			return
+		}
+		targetWindow.selectionView.updateSelection(selection)
+		targetWindow.displayIfNeeded()
+	}
+
 	func close() {
 		for window in windows {
+			window.selectionView.clearPresentation()
 			window.orderOut(nil)
 		}
+		activeSelectionWindow = nil
 		windows.removeAll()
 	}
 }
@@ -555,12 +595,21 @@ private final class QuickScreenshotSelectionWindow: NSPanel {
 @MainActor
 private final class QuickScreenshotSelectionView: NSView {
 	private let displayFrame: QuickScreenshotDisplayFrame
-	var selection: CGRect?
+	private let rootLayer = CALayer()
+	private let scrimLayer = LiveScrimLayer()
+	private let dragBorderOutlineLayer = CAShapeLayer()
+	private let dragBorderLayer = CAShapeLayer()
+	private let selectionSizeLayer = CATextLayer()
+	private let pointerLayer = CapturePointerAccentLayer()
+	private var selection: CGRect?
+	private var pointer: CGPoint?
 
 	init(displayFrame: QuickScreenshotDisplayFrame) {
 		self.displayFrame = displayFrame
 		super.init(frame: CGRect(origin: .zero, size: displayFrame.frame.size))
 		wantsLayer = true
+		layer = rootLayer
+		configureLayers()
 	}
 
 	@available(*, unavailable)
@@ -571,33 +620,167 @@ private final class QuickScreenshotSelectionView: NSView {
 	override var isFlipped: Bool { false }
 	override var isOpaque: Bool { false }
 
-	override func draw(_ dirtyRect: NSRect) {
-		super.draw(dirtyRect)
-		NSGraphicsContext.current?.cgContext.clear(dirtyRect)
-		drawDimmedMask()
+	override func layout() {
+		super.layout()
+		rootLayer.frame = bounds
+		if let selection {
+			updateSelectionLayers(selection)
+		}
+		updateCrosshairLayers(pointer)
 	}
 
-	private func drawDimmedMask() {
-		let maskPath = NSBezierPath(rect: bounds)
+	func updateSelection(_ selection: CGRect?) {
+		CATransaction.begin()
+		CATransaction.setDisableActions(true)
+		self.selection = selection
 		if let selection {
-			maskPath.append(NSBezierPath(rect: localRect(from: selection)))
-			maskPath.windingRule = .evenOdd
+			updateSelectionLayers(selection)
+		} else {
+			hideSelectionLayers()
 		}
-		NSColor(calibratedWhite: 0, alpha: CaptureChrome.liveScrimAlpha).setFill()
-		maskPath.fill()
+		CATransaction.commit()
+	}
 
-		guard let selection else {
+	func updatePointer(_ pointer: CGPoint?) {
+		CATransaction.begin()
+		CATransaction.setDisableActions(true)
+		defer { CATransaction.commit() }
+
+		self.pointer = pointer
+		updateCrosshairLayers(pointer)
+	}
+
+	func clearPresentation() {
+		updateSelection(nil)
+		updatePointer(nil)
+	}
+
+	private func updateCrosshairLayers(_ pointer: CGPoint?) {
+		guard let pointer else {
+			hideCrosshairLayers()
 			return
 		}
-		let selectionRect = localRect(from: selection)
-		NSColor.white.withAlphaComponent(0.96).setStroke()
-		let stroke = NSBezierPath(rect: selectionRect)
-		stroke.lineWidth = 1.5
-		stroke.stroke()
-		NSColor.systemBlue.withAlphaComponent(0.95).setStroke()
-		let innerStroke = NSBezierPath(rect: selectionRect.insetBy(dx: 1.5, dy: 1.5))
-		innerStroke.lineWidth = 1
-		innerStroke.stroke()
+		let localPoint = CGPoint(
+			x: pointer.x - displayFrame.frame.minX,
+			y: pointer.y - displayFrame.frame.minY
+		)
+		guard bounds.contains(localPoint) else {
+			hideCrosshairLayers()
+			return
+		}
+		let scale = window?.screen?.backingScaleFactor ?? 1
+		pointerLayer.update(pointer: localPoint, in: bounds, contentsScale: scale)
+	}
+
+	private func configureLayers() {
+		rootLayer.masksToBounds = true
+		rootLayer.isOpaque = false
+		rootLayer.backgroundColor = NSColor.clear.cgColor
+
+		scrimLayer.isHidden = true
+		rootLayer.addSublayer(scrimLayer)
+
+		for layer in [dragBorderOutlineLayer, dragBorderLayer] {
+			layer.fillColor = NSColor.clear.cgColor
+			layer.lineCap = .butt
+			layer.lineJoin = .miter
+			layer.isHidden = true
+			rootLayer.addSublayer(layer)
+		}
+		dragBorderOutlineLayer.strokeColor =
+			NSColor(calibratedRed: 229 / 255, green: 247 / 255, blue: 1, alpha: 116 / 255)
+			.cgColor
+		dragBorderOutlineLayer.lineWidth = CaptureChrome.liveDashedBorderWidth + 0.75
+		dragBorderLayer.strokeColor =
+			NSColor(calibratedRed: 167 / 255, green: 223 / 255, blue: 1, alpha: 0.96).cgColor
+		dragBorderLayer.lineWidth = CaptureChrome.liveDashedBorderWidth
+
+		selectionSizeLayer.isHidden = true
+		selectionSizeLayer.alignmentMode = .left
+		selectionSizeLayer.foregroundColor = NSColor.white.withAlphaComponent(0.98).cgColor
+		selectionSizeLayer.font = LiveOverlayTypography.font
+		selectionSizeLayer.fontSize = LiveOverlayTypography.font.pointSize
+		rootLayer.addSublayer(selectionSizeLayer)
+
+		rootLayer.addSublayer(pointerLayer)
+	}
+
+	private func updateSelectionLayers(_ globalSelection: CGRect) {
+		let selectionRect = localRect(from: globalSelection)
+		let scale = window?.screen?.backingScaleFactor ?? 1
+		scrimLayer.frame = bounds
+		scrimLayer.contentsScale = scale
+		scrimLayer.update(
+			focusRect: selectionRect,
+			color: NSColor(calibratedWhite: 0, alpha: CaptureChrome.liveScrimAlpha).cgColor,
+			roundedExclusions: []
+		)
+		scrimLayer.isHidden = false
+
+		let borderOutset = CaptureChrome.dashedBorderOutset(
+			strokeWidth: CaptureChrome.liveDashedBorderWidth,
+			pixelsPerPoint: scale
+		)
+		let borderRect = selectionRect.insetBy(dx: -borderOutset, dy: -borderOutset)
+		let layerFrame = dashedBorderLayerFrame(
+			for: borderRect,
+			lineWidth: CaptureChrome.liveDashedBorderWidth + 0.75
+		)
+		let localBorderRect = borderRect.offsetBy(dx: -layerFrame.minX, dy: -layerFrame.minY)
+		let path = CaptureChrome.dashedBorderPath(for: localBorderRect)
+		for layer in [dragBorderOutlineLayer, dragBorderLayer] {
+			layer.frame = layerFrame
+			layer.contentsScale = scale
+			layer.path = path
+			layer.isHidden = selectionRect.intersects(bounds) == false
+		}
+
+		renderSelectionSizeBadge(selectionRect, scale: scale)
+	}
+
+	private func hideSelectionLayers() {
+		scrimLayer.isHidden = true
+		dragBorderOutlineLayer.isHidden = true
+		dragBorderLayer.isHidden = true
+		selectionSizeLayer.isHidden = true
+	}
+
+	private func hideCrosshairLayers() {
+		pointerLayer.hide()
+	}
+
+	private func renderSelectionSizeBadge(_ selectionRect: CGRect, scale: CGFloat) {
+		guard selectionRect.intersects(bounds) else {
+			selectionSizeLayer.isHidden = true
+			return
+		}
+		let text = selectionSizeText(for: selectionRect)
+		let font = LiveOverlayTypography.font
+		let textSize = text.size(using: font)
+		selectionSizeLayer.contentsScale = scale
+		selectionSizeLayer.string = text
+		selectionSizeLayer.frame = CaptureChrome.selectionSizeBadgeFrame(
+			for: selectionRect,
+			textSize: textSize,
+			in: bounds
+		)
+		selectionSizeLayer.isHidden = false
+	}
+
+	private func dashedBorderLayerFrame(for borderRect: CGRect, lineWidth: CGFloat) -> CGRect {
+		let padding = max(lineWidth + 2, 4)
+		return borderRect.insetBy(dx: -padding, dy: -padding)
+	}
+
+	private func selectionSizeText(for rect: CGRect) -> String {
+		let scale = window?.screen?.backingScaleFactor ?? 1
+		let sizeText = "\(Int(round(rect.width * scale)))x\(Int(round(rect.height * scale)))px"
+
+		if abs(scale - 1) <= 0.005 {
+			return sizeText
+		}
+
+		return "\(sizeText) @\(String(format: "%g", Double(scale)))x"
 	}
 
 	private func localRect(from globalRect: CGRect) -> CGRect {

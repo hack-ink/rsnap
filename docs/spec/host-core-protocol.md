@@ -5,7 +5,7 @@ type: "Spec"
 status: active
 authority: normative
 owner: hack-ink/rsnap
-last_verified: 2026-07-06
+last_verified: 2026-07-07
 ---
 # Host/Core Protocol
 
@@ -63,6 +63,12 @@ The live capture contract now also requires:
 - `SceneModel.active_monitor`, `SceneModel.highlighted_window`, and `SceneModel.cursor_intent` as
   the only semantic inputs the native host uses for live hover glow, live targeting cursor state,
   and frozen cursor mapping
+
+`SceneModel.cursor_intent` describes product cursor semantics for the ordinary capture session. It
+does not require the quick screenshot path to activate or focus an overlay just to receive cursor
+rect updates. A native host quick screenshot acquisition path may hold temporary host-local cursor
+ownership while armed or selecting, provided it preserves the product no-focus invariant in
+`docs/spec/capture-session.md` and does not create durable product state outside the core protocol.
 
 The host must not retain its own product-state copy of:
 
