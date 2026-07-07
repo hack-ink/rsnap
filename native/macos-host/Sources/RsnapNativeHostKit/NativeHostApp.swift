@@ -6,7 +6,6 @@ import Darwin
 import Foundation
 import QuartzCore
 import RsnapHostBridge
-import Vision
 
 package struct LiveRgbSample: Sendable {
 	// SCStream may stop emitting while the captured display is static; FrozenFrameAuthority

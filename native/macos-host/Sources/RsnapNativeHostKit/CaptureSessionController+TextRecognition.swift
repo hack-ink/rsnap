@@ -2,7 +2,6 @@ import AppKit
 import CoreGraphics
 import Foundation
 import RsnapHostBridge
-import Vision
 
 extension CaptureSessionController {
 	struct RecognizeTextRun {
@@ -13,20 +12,13 @@ extension CaptureSessionController {
 		let automaticallyDetectsLanguage: Bool
 	}
 
-	struct RecognizeTextResult {
-		let observations: [VNRecognizedTextObservation]
-		let recognizedLines: [String]
-		let text: String
-		let processingMilliseconds: Double
-	}
-
 	struct RecognizeTextPasteboardTiming {
 		let clearMilliseconds: Double
 		let writeMilliseconds: Double
 	}
 
 	func performRecognizeText() throws {
-		guard let session else {
+		guard session != nil else {
 			return
 		}
 		guard recognizeTextActionEnabled else {
@@ -52,24 +44,93 @@ extension CaptureSessionController {
 		}
 		let cgImage = captureImage.image
 		let captureImageMilliseconds = captureImage.captureImageMilliseconds
-		let request = recognizeTextRequest(run: run)
-		let visionRequestMilliseconds = try performRecognizeTextRequest(
-			request,
-			cgImage: cgImage,
-			run: run,
-			captureImageMilliseconds: captureImageMilliseconds,
-			cacheHit: captureImage.cacheHit
+		let cacheHit = captureImage.cacheHit
+		hostEffectJobGeneration &+= 1
+		let jobGeneration = hostEffectJobGeneration
+		try setHostStatusMessage("Recognizing text...")
+		refreshOverlay()
+		NativeHostTelemetry.captureEvent(
+			"capture.recognize_text_queued",
+			captureID: run.captureID,
+			detail:
+				"width=\(cgImage.width) height=\(cgImage.height) cacheHit=\(cacheHit) jobGeneration=\(jobGeneration)"
 		)
-		let result = recognizeTextResult(from: request)
+
+		textRecognitionEngine.recognize(
+			cgImage: cgImage,
+			configuration: NativeTextRecognitionConfiguration(
+				recognitionLevel: run.recognitionLevel,
+				usesLanguageCorrection: run.usesLanguageCorrection,
+				automaticallyDetectsLanguage: run.automaticallyDetectsLanguage
+			)
+		) { [weak self] result in
+			self?.finishRecognizeTextJob(
+				result,
+				run: run,
+				cgImage: cgImage,
+				captureImageMilliseconds: captureImageMilliseconds,
+				cacheHit: cacheHit,
+				jobGeneration: jobGeneration
+			)
+		}
+	}
+
+	func finishRecognizeTextJob(
+		_ result: NativeTextRecognitionResult,
+		run: RecognizeTextRun,
+		cgImage: CGImage,
+		captureImageMilliseconds: Double,
+		cacheHit: Bool,
+		jobGeneration: UInt64
+	) {
+		guard hostEffectJobGeneration == jobGeneration, session != nil else {
+			NativeHostTelemetry.captureEvent(
+				"capture.recognize_text_discarded",
+				captureID: run.captureID,
+				outcome: "stale_job",
+				detail:
+					"jobGeneration=\(jobGeneration) currentGeneration=\(hostEffectJobGeneration)"
+			)
+			return
+		}
+		if let failureDescription = result.failureDescription {
+			recordRecognizeTextTiming(
+				run: run,
+				captureImageMilliseconds: captureImageMilliseconds,
+				visionRequestMilliseconds: result.visionRequestMilliseconds,
+				resultProcessingMilliseconds: result.processingMilliseconds,
+				clearPasteboardMilliseconds: 0,
+				writePasteboardMilliseconds: 0,
+				success: false,
+				outcome: "recognize_error",
+				failureStage: "vision_request",
+				width: cgImage.width,
+				height: cgImage.height,
+				observationCount: 0,
+				recognizedLines: 0,
+				recognizedCharacters: 0,
+				cacheHit: cacheHit
+			)
+			NativeHostTelemetry.captureWarning(
+				"capture.recognize_text_failed",
+				captureID: run.captureID,
+				stage: "vision_request",
+				error: failureDescription
+			)
+			try? setHostStatusMessage("Could not recognize text.")
+			refreshOverlay()
+			return
+		}
+
 		guard
-			let pasteboardTiming = try writeRecognizedTextIfNeeded(
+			let pasteboardTiming = try? writeRecognizedTextIfNeeded(
 				result.text,
 				run: run,
 				cgImage: cgImage,
 				captureImageMilliseconds: captureImageMilliseconds,
-				visionRequestMilliseconds: visionRequestMilliseconds,
+				visionRequestMilliseconds: result.visionRequestMilliseconds,
 				result: result,
-				cacheHit: captureImage.cacheHit
+				cacheHit: cacheHit
 			)
 		else {
 			return
@@ -78,7 +139,7 @@ extension CaptureSessionController {
 		recordRecognizeTextTiming(
 			run: run,
 			captureImageMilliseconds: captureImageMilliseconds,
-			visionRequestMilliseconds: visionRequestMilliseconds,
+			visionRequestMilliseconds: result.visionRequestMilliseconds,
 			resultProcessingMilliseconds: result.processingMilliseconds,
 			clearPasteboardMilliseconds: pasteboardTiming.clearMilliseconds,
 			writePasteboardMilliseconds: pasteboardTiming.writeMilliseconds,
@@ -87,23 +148,35 @@ extension CaptureSessionController {
 			failureStage: "none",
 			width: cgImage.width,
 			height: cgImage.height,
-			observationCount: result.observations.count,
-			recognizedLines: result.recognizedLines.count,
-			recognizedCharacters: result.text.count,
-			cacheHit: captureImage.cacheHit
+			observationCount: result.observationCount,
+			recognizedLines: result.recognizedLines,
+			recognizedCharacters: result.recognizedCharacters,
+			cacheHit: cacheHit
 		)
 
 		if result.text.isEmpty == false {
 			ocrCompletionSound.play()
 		}
 
-		try session.send(report: .hostEffectCompleted(.recognizeText))
 		let message =
 			result.text.isEmpty
 			? "No text was recognized."
 			: "Recognized text copied to clipboard."
-		try session.send(report: .statusMessage(message))
-		completedHostEffect = .recognizeText
+		do {
+			try session?.send(report: .hostEffectCompleted(.recognizeText))
+			try session?.send(report: .statusMessage(message))
+			completedHostEffect = .recognizeText
+			tearDownCapture()
+		} catch {
+			NativeHostTelemetry.captureWarning(
+				"capture.host_effect_complete_failed",
+				captureID: run.captureID,
+				stage: String(describing: HostEffectKind.recognizeText),
+				error: String(describing: error)
+			)
+			try? setHostStatusMessage(message)
+			refreshOverlay()
+		}
 	}
 
 	func recognizeTextCaptureImage(
@@ -139,76 +212,13 @@ extension CaptureSessionController {
 		return captureImage
 	}
 
-	func recognizeTextRequest(run: RecognizeTextRun) -> VNRecognizeTextRequest {
-		let request = VNRecognizeTextRequest()
-		request.recognitionLevel = .accurate
-		request.usesLanguageCorrection = run.usesLanguageCorrection
-		request.automaticallyDetectsLanguage = run.automaticallyDetectsLanguage
-		return request
-	}
-
-	func performRecognizeTextRequest(
-		_ request: VNRecognizeTextRequest,
-		cgImage: CGImage,
-		run: RecognizeTextRun,
-		captureImageMilliseconds: Double,
-		cacheHit: Bool
-	) throws -> Double {
-		let handler = VNImageRequestHandler(cgImage: cgImage)
-		let visionStartedAt = ProcessInfo.processInfo.systemUptime
-		do {
-			try handler.perform([request])
-		} catch {
-			let visionRequestMilliseconds = NativeHostTelemetry.milliseconds(since: visionStartedAt)
-			recordRecognizeTextTiming(
-				run: run,
-				captureImageMilliseconds: captureImageMilliseconds,
-				visionRequestMilliseconds: visionRequestMilliseconds,
-				resultProcessingMilliseconds: 0,
-				clearPasteboardMilliseconds: 0,
-				writePasteboardMilliseconds: 0,
-				success: false,
-				outcome: "recognize_error",
-				failureStage: "vision_request",
-				width: cgImage.width,
-				height: cgImage.height,
-				observationCount: 0,
-				recognizedLines: 0,
-				recognizedCharacters: 0,
-				cacheHit: cacheHit
-			)
-			throw error
-		}
-		return NativeHostTelemetry.milliseconds(since: visionStartedAt)
-	}
-
-	func recognizeTextResult(from request: VNRecognizeTextRequest) -> RecognizeTextResult {
-		let resultProcessingStartedAt = ProcessInfo.processInfo.systemUptime
-		let observations = request.results ?? []
-		let recognizedLines = observations.compactMap { observation -> String? in
-			guard let line = observation.topCandidates(1).first?.string,
-				line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-			else {
-				return nil
-			}
-			return line
-		}
-		return RecognizeTextResult(
-			observations: observations,
-			recognizedLines: recognizedLines,
-			text: recognizedLines.joined(separator: "\n"),
-			processingMilliseconds: NativeHostTelemetry.milliseconds(
-				since: resultProcessingStartedAt)
-		)
-	}
-
 	func writeRecognizedTextIfNeeded(
 		_ text: String,
 		run: RecognizeTextRun,
 		cgImage: CGImage,
 		captureImageMilliseconds: Double,
 		visionRequestMilliseconds: Double,
-		result: RecognizeTextResult,
+		result: NativeTextRecognitionResult,
 		cacheHit: Bool
 	) throws -> RecognizeTextPasteboardTiming? {
 		guard text.isEmpty == false else {
@@ -235,8 +245,8 @@ extension CaptureSessionController {
 				failureStage: "pasteboard_write",
 				width: cgImage.width,
 				height: cgImage.height,
-				observationCount: result.observations.count,
-				recognizedLines: result.recognizedLines.count,
+				observationCount: result.observationCount,
+				recognizedLines: result.recognizedLines,
 				recognizedCharacters: text.count,
 				cacheHit: cacheHit
 			)
