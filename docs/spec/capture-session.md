@@ -5,7 +5,7 @@ type: "Spec"
 status: active
 authority: normative
 owner: hack-ink/rsnap
-last_verified: 2026-07-06
+last_verified: 2026-07-07
 ---
 # Rsnap Capture Session Contract
 
@@ -68,10 +68,17 @@ product level rather than binding itself to a particular window toolkit or shell
 8. The product contract does not require any specific platform window implementation. Focus,
    cursor, keyboard, and IME correctness are mandatory outcomes, regardless of how the native host
    achieves them.
+9. The quick screenshot shortcut (default macOS: Shift-Option-X) is a separate acquisition path for
+   capturing transient UI such as right-click menus and submenu stacks. Quick screenshot MUST NOT
+   activate Rsnap, make an overlay key/main, take first responder, or otherwise steal focus from the
+   target app while the quick selection is armed or dragged. Any quick screenshot cursor feedback
+   must be implemented without relying on overlay focus.
 
 ## Live mode
 
 - Live mode presents a capture surface for the monitor under the cursor.
+- Live mode uses a crosshair cursor immediately after capture activation so users can tell the
+  screenshot surface is active before they freeze a selection.
 - Live mode shows a HUD near the cursor with:
   - global cursor coordinates `x,y`
   - pixel color `rgb(r,g,b)` under the cursor
@@ -108,6 +115,28 @@ product level rather than binding itself to a particular window toolkit or shell
 - Secondary click cancels capture from live mode.
 - Capture scope is single-monitor only for now. Cross-monitor region selection and cross-monitor
   window capture remain out of scope.
+
+## Quick screenshot mode
+
+- Quick screenshot mode exists to capture UI that would disappear when focus changes, including
+  context menus and nested submenu surfaces.
+- Quick screenshot mode MUST preserve the current frontmost app and focus chain while armed,
+  selecting, canceling, or completing the quick selection.
+- On macOS, quick screenshot overlays MUST remain non-key and non-activating. They may present
+  captured pixels, selection chrome, and pointer guide chrome, but they MUST NOT take
+  first-responder state, key-window state, application activation, or AppKit mouse delivery.
+- The native host may use a platform event tap or equivalent host-owned input acquisition mechanism
+  to intercept quick screenshot mouse and keyboard input without activating Rsnap.
+- Quick screenshot mode should present the same selection chrome vocabulary as ordinary capture
+  where that does not conflict with the no-focus requirement, including crosshair cursor feedback,
+  scrim, dashed selection border, and size badge.
+- On macOS, ordinary and quick screenshot paths should keep the native system cursor visible and
+  render a small Rsnap-owned capture halo overlay from Rsnap-controlled layers. The halo should read
+  as screenshot-mode feedback that pairs with the native cursor, not as a second replacement cursor.
+- The small capture halo overlay should be shared between ordinary live capture and quick screenshot
+  so both entry paths present the same pointer chrome.
+- Quick screenshot selection rendering must keep drag updates localized to the active selection
+  display and must not perform focus or z-order promotion inside the drag hot path.
 
 ## Focus, activation, and session cleanup
 
