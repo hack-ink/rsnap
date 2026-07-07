@@ -109,6 +109,7 @@ final class CaptureOverlayController {
 		if let focusedWindow {
 			focusedWindow.hostView.refreshLivePresentationNow()
 			focusedWindow.displayIfNeeded()
+			focusedWindow.hostView.forceVisibleCursorRefresh()
 		}
 	}
 
@@ -267,9 +268,13 @@ final class CaptureOverlayController {
 		targetWindow.makeFirstResponder(targetWindow.hostView)
 		focusedWindowNumber = targetWindow.windowNumber
 		(NSApp.delegate as? NativeHostApplicationController)?.window = targetWindow
+		for window in windows where window !== targetWindow {
+			window.hostView.clearVisibleCursorOverride()
+		}
 		liveChromePipeline.hideBackdrops()
 		targetWindow.hostView.refreshLivePresentationNow()
 		targetWindow.displayIfNeeded()
+		targetWindow.hostView.forceVisibleCursorRefresh()
 	}
 
 	func withPrimaryMousePassthrough<T>(duration: TimeInterval, perform: () -> T) -> T {
@@ -381,6 +386,7 @@ final class CaptureOverlayController {
 		(NSApp.delegate as? NativeHostApplicationController)?.window = nil
 
 		for window in windowsToRetire {
+			window.hostView.clearVisibleCursorOverride()
 			window.hostView.clearLivePrimaryInteractionState(rendersImmediately: false)
 			window.hostView.finishLivePresentationTelemetry(reason: "close")
 			window.hostView.controller = nil
@@ -585,6 +591,7 @@ final class CaptureOverlayController {
 		primaryWindow.makeFirstResponder(primaryWindow.hostView)
 
 		for window in secondaryWindows {
+			window.hostView.clearVisibleCursorOverride()
 			window.hostView.controller = nil
 			window.ignoresMouseEvents = true
 			window.orderOut(nil)

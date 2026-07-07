@@ -108,7 +108,7 @@ fn ffi_session_enters_live_and_emits_request() {
 		RsnapStatus::Ok
 	);
 	assert_eq!(scene.scene_kind, RsnapSceneKind::Live as u32);
-	assert_eq!(scene.cursor_intent, RsnapCursorIntent::Default as u32);
+	assert_eq!(scene.cursor_intent, RsnapCursorIntent::Crosshair as u32);
 
 	unsafe { crate::rsnap_session_destroy(handle) };
 }

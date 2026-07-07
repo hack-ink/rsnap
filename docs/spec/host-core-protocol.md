@@ -61,7 +61,8 @@ The live capture contract now also requires:
 - `HostRequest::RequestFreezeSnapshot.selection_editable` for the core-owned decision about
   whether the committed Frozen selection may be moved or resized after commit
 - `SceneModel.active_monitor`, `SceneModel.highlighted_window`, and `SceneModel.cursor_intent` as
-  the only semantic inputs the native host uses for live hover glow and frozen cursor mapping
+  the only semantic inputs the native host uses for live hover glow, live targeting cursor state,
+  and frozen cursor mapping
 
 The host must not retain its own product-state copy of:
 

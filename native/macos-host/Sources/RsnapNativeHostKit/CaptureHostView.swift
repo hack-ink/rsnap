@@ -29,6 +29,7 @@ final class CaptureHostView: NSView {
 	var annotationStyleWheelGate = CaptureHostAnnotationStyleWheelGate()
 	var lastCursorPresentation: CaptureHostCursorPresentation?
 	var lastAppliedCursorPresentation: CaptureHostCursorPresentation?
+	var pushedCursorPresentation: CaptureHostCursorPresentation?
 	var livePrimaryInteraction = CaptureHostLivePrimaryInteractionState()
 	let mouseReleaseRecovery = CaptureHostMouseReleaseRecovery()
 	let livePointerPreview = CaptureHostLivePointerPreviewState()
@@ -86,6 +87,10 @@ final class CaptureHostView: NSView {
 	@available(*, unavailable)
 	required init?(coder: NSCoder) {
 		fatalError("init(coder:) has not been implemented")
+	}
+
+	isolated deinit {
+		clearVisibleCursorOverride()
 	}
 
 	func update(
