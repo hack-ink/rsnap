@@ -89,7 +89,6 @@ struct SettingsRail: View {
 				}
 			}
 		}
-		.padding(.top, 2)
 	}
 }
 
@@ -186,11 +185,12 @@ private struct SettingsRailButton: View {
 
 struct SettingsDashboard: View {
 	@ObservedObject var model: NativeHostSettingsViewModel
+	@ObservedObject var shortcutRecorder: SettingsShortcutRecorder
 	let section: NativeHostSettingsSection
 	let restoreDefaults: () -> Void
 
 	var body: some View {
-		VStack(alignment: .leading, spacing: 6) {
+		VStack(alignment: .leading, spacing: SettingsControlLayout.panelContentSpacing) {
 			SettingsContentHeader(
 				section: section,
 				restoreDefaults: restoreDefaults
@@ -205,16 +205,13 @@ struct SettingsDashboard: View {
 							removal: .opacity.combined(with: .move(edge: .top))
 						)
 					)
-					.padding(.trailing, 8)
-					.padding(.bottom, 2)
 			}
 			.scrollIndicators(.hidden)
 			.frame(maxWidth: .infinity, alignment: .topLeading)
 			.animation(.spring(response: 0.34, dampingFraction: 0.86), value: section)
 		}
-		.padding(.horizontal, 13)
-		.padding(.vertical, 9)
-		.settingsGlassSurface(cornerRadius: 18, role: .panel)
+		.padding(SettingsControlLayout.margin)
+		.settingsGlassSurface(cornerRadius: SettingsControlLayout.panelCornerRadius, role: .panel)
 	}
 
 	@ViewBuilder
@@ -223,7 +220,7 @@ struct SettingsDashboard: View {
 		case .appearance:
 			AppearanceSettingsPanel(model: model)
 		case .capture:
-			CaptureSettingsPanel(model: model)
+			CaptureSettingsPanel(model: model, shortcutRecorder: shortcutRecorder)
 		case .output:
 			OutputSettingsPanel(model: model)
 		case .permissions:
@@ -258,6 +255,5 @@ private struct SettingsContentHeader: View {
 				.controlSize(.small)
 			}
 		}
-		.padding(.bottom, 2)
 	}
 }

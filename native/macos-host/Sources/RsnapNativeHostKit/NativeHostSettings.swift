@@ -147,6 +147,9 @@ final class NativeHostSettingsStore {
 
 struct NativeHostSettings: Equatable {
 	static let defaultQuickScreenshotHotkey = "Option-Shift-X"
+	private static let configurableModifierFlags: NSEvent.ModifierFlags = [
+		.control, .option, .shift, .command,
+	]
 
 	var captureHotkey: String
 	var quickScreenshotHotkey: String
@@ -253,6 +256,31 @@ struct NativeHostSettings: Equatable {
 		hotKeyPresentation(for: raw, fallback: defaultQuickScreenshotHotkey)
 	}
 
+	static func hotKeyDisplayTitle(
+		for modifierFlags: NSEvent.ModifierFlags,
+		keyCode: UInt32
+	) -> String? {
+		guard let key = hotKeyToken(forKeyCode: keyCode) else {
+			return nil
+		}
+		let modifiers = modifierFlags.intersection(configurableModifierFlags)
+		var titleParts: [String] = []
+		if modifiers.contains(.control) {
+			titleParts.append("Control")
+		}
+		if modifiers.contains(.option) {
+			titleParts.append("Option")
+		}
+		if modifiers.contains(.shift) {
+			titleParts.append("Shift")
+		}
+		if modifiers.contains(.command) {
+			titleParts.append("Command")
+		}
+		titleParts.append(key)
+		return titleParts.joined(separator: "-")
+	}
+
 	static func hotKeyPresentation(for raw: String, fallback: String)
 		-> CaptureHotKeyPresentation
 	{
@@ -305,7 +333,7 @@ struct NativeHostSettings: Equatable {
 		if modifiers.contains(.command) {
 			titleParts.append("Command")
 		}
-		titleParts.append(keyEquivalent.uppercased())
+		titleParts.append(displayKeyTitle(for: keyEquivalent))
 		return CaptureHotKeyPresentation(
 			displayTitle: titleParts.joined(separator: "-"),
 			keyEquivalent: keyEquivalent,
@@ -316,10 +344,33 @@ struct NativeHostSettings: Equatable {
 	private static func normalizedMenuKeyEquivalent(for token: String) -> String? {
 		let normalized = token.lowercased()
 		let key = normalized.hasPrefix("key") ? String(normalized.dropFirst(3)) : normalized
+		if key == "minus" {
+			return "-"
+		}
 		guard key.count == 1, key.unicodeScalars.allSatisfy(\.isASCII) else {
 			return nil
 		}
 		return key
+	}
+
+	private static func displayKeyTitle(for keyEquivalent: String) -> String {
+		if keyEquivalent == "-" {
+			return "Minus"
+		}
+		return keyEquivalent.uppercased()
+	}
+
+	private static func hotKeyToken(forKeyCode keyCode: UInt32) -> String? {
+		let keyTokensByCode: [UInt32: String] = [
+			0: "a", 1: "s", 2: "d", 3: "f", 4: "h", 5: "g", 6: "z", 7: "x",
+			8: "c", 9: "v", 11: "b", 12: "q", 13: "w", 14: "e", 15: "r",
+			16: "y", 17: "t", 18: "1", 19: "2", 20: "3", 21: "4", 22: "6",
+			23: "5", 24: "=", 25: "9", 26: "7", 27: "Minus", 28: "8", 29: "0",
+			30: "]", 31: "o", 32: "u", 33: "[", 34: "i", 35: "p", 37: "l",
+			38: "j", 39: "'", 40: "k", 41: ";", 42: "\\", 43: ",", 44: "/",
+			45: "n", 46: "m", 47: ".",
+		]
+		return keyTokensByCode[keyCode]
 	}
 
 	static func captureHotKeyTokens(from raw: String) -> [String] {

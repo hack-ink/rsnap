@@ -5,6 +5,8 @@ import RsnapHostBridge
 import SwiftUI
 
 private final class SettingsWindow: NSWindow {
+	weak var shortcutRecorder: SettingsShortcutRecorder?
+
 	override var canBecomeKey: Bool {
 		true
 	}
@@ -14,6 +16,9 @@ private final class SettingsWindow: NSWindow {
 	}
 
 	override func performKeyEquivalent(with event: NSEvent) -> Bool {
+		if shortcutRecorder?.handleKeyEvent(event) == true {
+			return true
+		}
 		if handleCommandShortcut(event) {
 			return true
 		}
@@ -21,10 +26,34 @@ private final class SettingsWindow: NSWindow {
 	}
 
 	override func keyDown(with event: NSEvent) {
+		if shortcutRecorder?.handleKeyEvent(event) == true {
+			return
+		}
 		if handleCommandShortcut(event) {
 			return
 		}
 		super.keyDown(with: event)
+	}
+
+	override func sendEvent(_ event: NSEvent) {
+		if shortcutRecorder?.isRecording == true {
+			switch event.type {
+			case .leftMouseDown, .rightMouseDown, .otherMouseDown:
+				shortcutRecorder?.cancel()
+				return
+			default:
+				break
+			}
+		}
+		super.sendEvent(event)
+	}
+
+	override func cancelOperation(_ sender: Any?) {
+		if shortcutRecorder?.isRecording == true {
+			shortcutRecorder?.cancel()
+			return
+		}
+		super.cancelOperation(sender)
 	}
 
 	private func handleCommandShortcut(_ event: NSEvent) -> Bool {
@@ -53,16 +82,20 @@ private final class SettingsWindow: NSWindow {
 @MainActor
 final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 	private let viewModel: NativeHostSettingsViewModel
+	let shortcutRecorder = SettingsShortcutRecorder()
 	private let onClose: () -> Void
+	private let onShortcutRecordingChanged: (Bool) -> Void
 
 	init(
 		settingsStore: NativeHostSettingsStore,
 		softwareUpdater: SoftwareUpdater,
+		onShortcutRecordingChanged: @escaping (Bool) -> Void = { _ in },
 		onClose: @escaping () -> Void = {}
 	) {
 		self.viewModel = NativeHostSettingsViewModel(
 			settingsStore: settingsStore,
 			softwareUpdater: softwareUpdater)
+		self.onShortcutRecordingChanged = onShortcutRecordingChanged
 		self.onClose = onClose
 
 		let contentRect = NSRect(
@@ -78,6 +111,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 			defer: false
 		)
 		window.title = "Settings"
+		window.shortcutRecorder = shortcutRecorder
 		window.titleVisibility = .hidden
 		window.titlebarAppearsTransparent = true
 		window.isMovableByWindowBackground = false
@@ -96,11 +130,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
 		window.delegate = self
 		let hostingController = NSHostingController(
-			rootView: NativeHostSettingsView(model: viewModel))
+			rootView: NativeHostSettingsView(
+				model: viewModel,
+				shortcutRecorder: shortcutRecorder))
 		hostingController.view.wantsLayer = true
 		hostingController.view.layer?.backgroundColor = NSColor.clear.cgColor
 		window.contentViewController = hostingController
 		window.center()
+		shortcutRecorder.onRecordingChanged = onShortcutRecordingChanged
 		viewModel.refresh()
 	}
 
@@ -129,7 +166,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 	}
 
 	func windowWillClose(_: Notification) {
+		shortcutRecorder.cancel()
 		onClose()
+	}
+
+	func windowDidResignKey(_: Notification) {
+		shortcutRecorder.cancel()
 	}
 }
 
