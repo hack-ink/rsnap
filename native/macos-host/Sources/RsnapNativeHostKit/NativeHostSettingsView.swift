@@ -3,8 +3,8 @@ import SwiftUI
 
 enum NativeHostSettingsWindowMetrics {
 	static let width: CGFloat = 620
-	static let minHeight: CGFloat = 332
-	static let idealHeight: CGFloat = 332
+	static let minHeight: CGFloat = 340
+	static let idealHeight: CGFloat = 340
 	static let cornerRadius: CGFloat = 18
 }
 
@@ -76,6 +76,7 @@ final class NativeHostSettingsViewModel: ObservableObject {
 
 struct NativeHostSettingsView: View {
 	@ObservedObject var model: NativeHostSettingsViewModel
+	@ObservedObject var shortcutRecorder: SettingsShortcutRecorder
 	@State private var selectedSection: NativeHostSettingsSection = .appearance
 	private let sidebarWidth: CGFloat = 142
 
@@ -83,21 +84,20 @@ struct NativeHostSettingsView: View {
 		ZStack {
 			SettingsAtmosphere(tintHue: model.settings.hudTintHue)
 
-			HStack(alignment: .top, spacing: 10) {
+			HStack(alignment: .top, spacing: SettingsControlLayout.margin) {
 				SettingsRail(selectedSection: $selectedSection)
 					.frame(width: sidebarWidth)
-					.padding(.top, 24)
+					.padding(.top, SettingsControlLayout.sidebarTitlebarOffset)
 
 				SettingsDashboard(
 					model: model,
+					shortcutRecorder: shortcutRecorder,
 					section: selectedSection,
 					restoreDefaults: model.restoreDefaults
 				)
 				.frame(maxWidth: .infinity, alignment: .topLeading)
 			}
-			.padding(.top, 12)
-			.padding(.horizontal, 14)
-			.padding(.bottom, 12)
+			.padding(SettingsControlLayout.margin)
 		}
 		.ignoresSafeArea(.container, edges: .top)
 		.controlSize(.small)
@@ -131,7 +131,7 @@ private struct SettingsSectionInspector: View {
 		}
 		.padding(14)
 		.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-		.settingsGlassSurface(cornerRadius: 18, role: .panel)
+		.settingsGlassSurface(cornerRadius: SettingsControlLayout.panelCornerRadius, role: .panel)
 	}
 }
 

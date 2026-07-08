@@ -116,6 +116,7 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 	private var didBootstrap = false
 	private var didPresentLaunchPermissionOnboarding = false
 	private var settingsWindowIsVisible = false
+	private var settingsShortcutRecordingActive = false
 	private var permissionRecoveryGuideIsVisible = false
 	private lazy var softwareUpdater = SoftwareUpdater()
 	@objc public dynamic var window: NSWindow?
@@ -137,6 +138,9 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 	private lazy var settingsWindowController = SettingsWindowController(
 		settingsStore: settingsStore,
 		softwareUpdater: softwareUpdater,
+		onShortcutRecordingChanged: { [weak self] isRecording in
+			self?.settingsShortcutRecordingDidChange(isRecording)
+		},
 		onClose: { [weak self] in
 			self?.settingsWindowDidClose()
 		})
@@ -458,6 +462,11 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 		guard let captureMenuItem else {
 			return
 		}
+		guard settingsShortcutRecordingActive == false else {
+			captureMenuItem.keyEquivalent = ""
+			captureMenuItem.keyEquivalentModifierMask = []
+			return
+		}
 		let shortcut = NativeHostSettings.captureHotKeyPresentation(
 			for: settingsStore.settings.captureHotkey)
 		captureMenuItem.keyEquivalent = shortcut.keyEquivalent
@@ -468,6 +477,11 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 		guard let quickScreenshotMenuItem else {
 			return
 		}
+		guard settingsShortcutRecordingActive == false else {
+			quickScreenshotMenuItem.keyEquivalent = ""
+			quickScreenshotMenuItem.keyEquivalentModifierMask = []
+			return
+		}
 		let shortcut = NativeHostSettings.quickScreenshotHotKeyPresentation(
 			for: settingsStore.settings.quickScreenshotHotkey)
 		quickScreenshotMenuItem.keyEquivalent = shortcut.keyEquivalent
@@ -475,6 +489,10 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 	}
 
 	private func refreshHotKeyBindings(for mode: SceneKind) {
+		guard settingsShortcutRecordingActive == false else {
+			hotKeyCoordinator.suspendBindings()
+			return
+		}
 		let effectiveMode: SceneKind = sessionController.isCaptureActive ? mode : .hidden
 		hotKeyCoordinator.update(
 			captureHotKey: settingsStore.settings.captureHotkey,
@@ -485,6 +503,13 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 
 	@objc
 	private func settingsDidChange() {
+		refreshHotKeyBindings(for: sessionController.currentSceneMode)
+		updateCaptureMenuShortcut()
+		updateQuickScreenshotMenuShortcut()
+	}
+
+	private func settingsShortcutRecordingDidChange(_ isRecording: Bool) {
+		settingsShortcutRecordingActive = isRecording
 		refreshHotKeyBindings(for: sessionController.currentSceneMode)
 		updateCaptureMenuShortcut()
 		updateQuickScreenshotMenuShortcut()

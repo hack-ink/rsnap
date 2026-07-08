@@ -61,4 +61,9 @@ final class HotKeyBindingCoordinator {
 		hotKeys.invalidate()
 		appliedState = nil
 	}
+
+	func suspendBindings() {
+		hotKeys.suspendRegisteredHotKeys()
+		appliedState = nil
+	}
 }
