@@ -69,6 +69,7 @@ private struct LoupeSampleSizePicker: View {
 
 struct CaptureSettingsPanel: View {
 	@ObservedObject var model: NativeHostSettingsViewModel
+	@ObservedObject var shortcutRecorder: SettingsShortcutRecorder
 
 	var body: some View {
 		VStack(spacing: 8) {
@@ -77,7 +78,7 @@ struct CaptureSettingsPanel: View {
 				title: "New Screenshot Shortcut",
 				subtitle: "Current: \(shortcutPresentation.displayTitle)."
 			) {
-				CaptureHotKeyField(model: model)
+				captureHotKeyField
 			}
 
 			SettingsHeroControlTile(
@@ -85,7 +86,7 @@ struct CaptureSettingsPanel: View {
 				title: "Quick Screenshot Shortcut",
 				subtitle: "Current: \(quickScreenshotShortcutPresentation.displayTitle)."
 			) {
-				QuickScreenshotHotKeyField(model: model)
+				quickScreenshotHotKeyField
 			}
 
 			VStack(spacing: 0) {
@@ -150,105 +151,69 @@ struct CaptureSettingsPanel: View {
 		NativeHostSettings.quickScreenshotHotKeyPresentation(
 			for: model.settings.quickScreenshotHotkey)
 	}
-}
 
-private struct CaptureHotKeyField: View {
-	@ObservedObject var model: NativeHostSettingsViewModel
-	@FocusState private var isFocused: Bool
-	@State private var draft = ""
-
-	var body: some View {
-		TextField("Option-X", text: $draft)
-			.font(.system(size: 10.5, weight: .semibold, design: .monospaced))
-			.textFieldStyle(.plain)
-			.padding(.horizontal, 10)
-			.padding(.vertical, 6)
-			.background(Color.primary.opacity(0.070), in: .rect(cornerRadius: 9))
-			.overlay {
-				RoundedRectangle(cornerRadius: 9, style: .continuous)
-					.stroke(Color.primary.opacity(0.075), lineWidth: 1)
-			}
-			.frame(width: SettingsControlLayout.controlColumnWidth)
-			.focused($isFocused)
-			.onAppear(perform: syncDraft)
-			.onSubmit(commitDraft)
-			.onChange(of: isFocused) { _, focused in
-				if focused {
-					syncDraft()
-				} else {
-					commitDraft()
-				}
-			}
-			.onChange(of: model.settings.captureHotkey) { _, _ in
-				if isFocused == false {
-					syncDraft()
-				}
-			}
-	}
-
-	private func syncDraft() {
-		draft =
-			NativeHostSettings.captureHotKeyPresentation(
+	private var captureHotKeyField: some View {
+		ShortcutRecorderField(
+			value: NativeHostSettings.captureHotKeyPresentation(
 				for: model.settings.captureHotkey
-			).displayTitle
+			).displayTitle,
+			isListening: shortcutRecorder.target == .capture
+		) {
+			shortcutRecorder.toggle(.capture) { value in
+				model.update { $0.captureHotkey = value }
+			}
+		}
+		.frame(width: SettingsControlLayout.controlColumnWidth, height: 26)
 	}
 
-	private func commitDraft() {
-		let committed = NativeHostSettings.captureHotKeyPresentation(for: draft).displayTitle
-		if committed != model.settings.captureHotkey {
-			model.update { $0.captureHotkey = committed }
+	private var quickScreenshotHotKeyField: some View {
+		ShortcutRecorderField(
+			value: NativeHostSettings.quickScreenshotHotKeyPresentation(
+				for: model.settings.quickScreenshotHotkey
+			).displayTitle,
+			isListening: shortcutRecorder.target == .quickScreenshot
+		) {
+			shortcutRecorder.toggle(.quickScreenshot) { value in
+				model.update { $0.quickScreenshotHotkey = value }
+			}
 		}
-		draft = committed
+		.frame(width: SettingsControlLayout.controlColumnWidth, height: 26)
 	}
 }
 
-private struct QuickScreenshotHotKeyField: View {
-	@ObservedObject var model: NativeHostSettingsViewModel
-	@FocusState private var isFocused: Bool
-	@State private var draft = ""
+private struct ShortcutRecorderField: View {
+	let value: String
+	let isListening: Bool
+	let onClick: () -> Void
 
 	var body: some View {
-		TextField("Option-Shift-X", text: $draft)
-			.font(.system(size: 10.5, weight: .semibold, design: .monospaced))
-			.textFieldStyle(.plain)
-			.padding(.horizontal, 10)
-			.padding(.vertical, 6)
-			.background(Color.primary.opacity(0.070), in: .rect(cornerRadius: 9))
-			.overlay {
-				RoundedRectangle(cornerRadius: 9, style: .continuous)
-					.stroke(Color.primary.opacity(0.075), lineWidth: 1)
-			}
-			.frame(width: SettingsControlLayout.controlColumnWidth)
-			.focused($isFocused)
-			.onAppear(perform: syncDraft)
-			.onSubmit(commitDraft)
-			.onChange(of: isFocused) { _, focused in
-				if focused {
-					syncDraft()
-				} else {
-					commitDraft()
+		Button(action: onClick) {
+			Text(isListening ? "Listening..." : value)
+				.font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+				.foregroundStyle(isListening ? Color.accentColor : Color.primary)
+				.lineLimit(1)
+				.minimumScaleFactor(0.75)
+				.frame(
+					width: SettingsControlLayout.controlColumnWidth,
+					height: 26,
+					alignment: .center
+				)
+				.background(
+					Color.primary.opacity(isListening ? 0.095 : 0.070),
+					in: .rect(cornerRadius: 9)
+				)
+				.overlay {
+					RoundedRectangle(cornerRadius: 9, style: .continuous)
+						.stroke(
+							isListening
+								? Color.accentColor.opacity(0.45)
+								: Color.primary.opacity(0.075),
+							lineWidth: 1)
 				}
-			}
-			.onChange(of: model.settings.quickScreenshotHotkey) { _, _ in
-				if isFocused == false {
-					syncDraft()
-				}
-			}
-	}
-
-	private func syncDraft() {
-		draft =
-			NativeHostSettings.quickScreenshotHotKeyPresentation(
-				for: model.settings.quickScreenshotHotkey
-			).displayTitle
-	}
-
-	private func commitDraft() {
-		let committed = NativeHostSettings.quickScreenshotHotKeyPresentation(for: draft)
-			.displayTitle
-		if committed != model.settings.quickScreenshotHotkey {
-			model.update { $0.quickScreenshotHotkey = committed }
+				.contentShape(.rect)
 		}
-		draft = committed
+		.buttonStyle(.plain)
+		.frame(width: SettingsControlLayout.controlColumnWidth, height: 26)
+		.accessibilityValue(isListening ? "Listening" : value)
 	}
 }
