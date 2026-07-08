@@ -5,7 +5,7 @@ type: "Spec"
 status: active
 authority: normative
 owner: hack-ink/rsnap
-last_verified: 2026-07-07
+last_verified: 2026-07-08
 ---
 # Settings and App Shell Contract
 
@@ -75,6 +75,11 @@ Defines:
   `Option-Shift-X`.
 - Raw event spellings such as `alt+KeyX` must not appear in user-facing shortcut fields,
   summaries, or menu shortcut labels.
+- Shortcut controls must use click-to-listen behavior instead of requiring users to type raw
+  shortcut strings. Clicking a shortcut value arms capture for the next supported key press,
+  commits the canonical platform display string, and persists the result immediately.
+- While a shortcut control is listening, `Esc`, the next mouse-down in Settings, or losing
+  Settings-window focus must cancel listening without changing the stored shortcut.
 - The default capture shortcut is `Option-X`.
 - The default quick screenshot shortcut is `Option-Shift-X`.
 - In live capture, plain `Tab` toggles the loupe on and off. Hold-to-show Tab behavior is not a

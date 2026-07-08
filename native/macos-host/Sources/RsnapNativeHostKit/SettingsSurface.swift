@@ -1,6 +1,12 @@
 import SwiftUI
 
 enum SettingsControlLayout {
+	static let margin: CGFloat = 10
+	static let sidebarTitlebarOffset: CGFloat = 24
+	static let panelContentSpacing: CGFloat = 8
+	static var panelCornerRadius: CGFloat {
+		max(8, NativeHostSettingsWindowMetrics.cornerRadius - margin)
+	}
 	static let controlColumnWidth: CGFloat = 178
 	static let sliderValueWidth: CGFloat = 34
 	static let sliderTrackWidth: CGFloat = 136
