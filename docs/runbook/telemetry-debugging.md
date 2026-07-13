@@ -4,7 +4,7 @@ description: "Telemetry Debugging documentation for Rsnap."
 type: "Runbook"
 status: active
 authority: normative
-owner: hack-ink/rsnap
+owner: acgxv/rsnap
 last_verified: 2026-07-06
 ---
 # Telemetry Debugging

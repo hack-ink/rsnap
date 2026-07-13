@@ -4,7 +4,7 @@ description: "Annotation Pen Style documentation for Rsnap."
 type: "Decision"
 status: active
 authority: normative
-owner: hack-ink/rsnap
+owner: acgxv/rsnap
 last_verified: 2026-07-06
 ---
 # Annotation Pen Style

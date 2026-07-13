@@ -4,7 +4,7 @@ description: "Host/Core Reset Reference documentation for Rsnap."
 type: "Reference"
 status: active
 authority: normative
-owner: hack-ink/rsnap
+owner: acgxv/rsnap
 last_verified: 2026-07-06
 ---
 # Host/Core Reset Reference

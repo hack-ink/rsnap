@@ -4,7 +4,7 @@ description: "Validate Host/Core Reset Work documentation for Rsnap."
 type: "Runbook"
 status: active
 authority: normative
-owner: hack-ink/rsnap
+owner: acgxv/rsnap
 last_verified: 2026-07-06
 ---
 # Validate Host/Core Reset Work

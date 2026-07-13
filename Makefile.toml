@@ -403,7 +403,7 @@ plutil -extract CFBundleName raw "$APP_PATH/Contents/Info.plist" | grep -qx 'Rsn
 plutil -extract CFBundleDisplayName raw "$APP_PATH/Contents/Info.plist" | grep -qx 'Rsnap'
 plutil -extract CFBundleIdentifier raw "$APP_PATH/Contents/Info.plist" | grep -qx 'ink.hack.rsnap'
 plutil -extract SUFeedURL raw "$APP_PATH/Contents/Info.plist" \
-  | grep -qx 'https://github.com/hack-ink/rsnap/releases/latest/download/appcast.xml'
+  | grep -qx 'https://github.com/acgxv/rsnap/releases/latest/download/appcast.xml'
 plutil -extract SUPublicEDKey raw "$APP_PATH/Contents/Info.plist" \
   | grep -qx 'X2EaTv6mCzkYxz75Hh+ldMkKlpzNlHRg5l7Kn9ke8Ow='
 plutil -extract SUEnableAutomaticChecks raw "$APP_PATH/Contents/Info.plist" | grep -qx 'true'

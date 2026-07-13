@@ -4,7 +4,7 @@ description: "Settings and App Shell Contract documentation for Rsnap."
 type: "Spec"
 status: active
 authority: normative
-owner: hack-ink/rsnap
+owner: acgxv/rsnap
 last_verified: 2026-07-08
 ---
 # Settings and App Shell Contract
@@ -154,13 +154,13 @@ Defines:
 - Settings must include an About section.
 - The About section must identify Yvette Cipher as the creator and describe Rsnap as an
   open-source macOS capture tool.
-- The About section must include external links to `https://github.com/hack-ink/rsnap` and
+- The About section must include external links to `https://github.com/acgxv/rsnap` and
   `https://x.com/hackink`.
 - The X link may encourage following for ongoing Rsnap updates and may state that follows
   help support future work.
 - Release builds must use Sparkle's standard updater UI and appcast format for macOS self-updates.
   GitHub Releases remains the distribution surface, but the Sparkle appcast at
-  `https://github.com/hack-ink/rsnap/releases/latest/download/appcast.xml` is the update-version
+  `https://github.com/acgxv/rsnap/releases/latest/download/appcast.xml` is the update-version
   authority for in-app update checks.
 - The appcast must compare against the running app bundle's `CFBundleVersion`. The user-visible
   version should remain `CFBundleShortVersionString`.

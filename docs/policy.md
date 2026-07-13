@@ -4,7 +4,7 @@ description: "Documentation Policy documentation for Rsnap."
 type: "Policy"
 status: active
 authority: normative
-owner: hack-ink/rsnap
+owner: acgxv/rsnap
 last_verified: 2026-07-06
 ---
 # Documentation Policy

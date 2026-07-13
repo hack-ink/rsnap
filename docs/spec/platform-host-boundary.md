@@ -4,7 +4,7 @@ description: "Platform Host Boundary documentation for Rsnap."
 type: "Spec"
 status: active
 authority: normative
-owner: hack-ink/rsnap
+owner: acgxv/rsnap
 last_verified: 2026-07-07
 ---
 # Platform Host Boundary

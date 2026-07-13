@@ -26,7 +26,7 @@ APP_ICON_SOURCE="$ROOT_DIR/assets/app-icon/generated/app-icon.icns"
 APP_ICON_NAME="AppIcon.icns"
 STATUS_ICON_SOURCE="$ROOT_DIR/assets/tray-icon/generated/tray-icon-template.png"
 STATUS_ICON_NAME="StatusBarIcon.png"
-SPARKLE_APPCAST_URL="${RSNAP_SPARKLE_APPCAST_URL:-https://github.com/hack-ink/rsnap/releases/latest/download/appcast.xml}"
+SPARKLE_APPCAST_URL="${RSNAP_SPARKLE_APPCAST_URL:-https://github.com/acgxv/rsnap/releases/latest/download/appcast.xml}"
 # The public update key is safe to ship in source. The override exists only for
 # local Sparkle smoke tests that generate a disposable key pair and appcast.
 SPARKLE_PUBLIC_ED_KEY="${RSNAP_SPARKLE_PUBLIC_ED_KEY:-$DEFAULT_SPARKLE_PUBLIC_ED_KEY}"

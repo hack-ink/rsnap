@@ -58,7 +58,7 @@ final class SoftwareUpdater: NSObject {
 
 	static let releasePageURL = httpsURL(
 		host: "github.com",
-		path: "/hack-ink/rsnap/releases/latest")
+		path: "/acgxv/rsnap/releases/latest")
 
 	var canPerformImmediateInstall: (() -> Bool)?
 

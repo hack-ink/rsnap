@@ -5,11 +5,11 @@
 macOS-first screenshot app built with a native host and Rust core.
 
 [![License](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Language Checks](https://github.com/hack-ink/rsnap/actions/workflows/language.yml/badge.svg?branch=main)](https://github.com/hack-ink/rsnap/actions/workflows/language.yml)
-[![Release](https://github.com/hack-ink/rsnap/actions/workflows/release.yml/badge.svg)](https://github.com/hack-ink/rsnap/actions/workflows/release.yml)
-[![GitHub tag (latest by date)](https://img.shields.io/github/v/tag/hack-ink/rsnap)](https://github.com/hack-ink/rsnap/tags)
-[![GitHub last commit](https://img.shields.io/github/last-commit/hack-ink/rsnap?color=red&style=plastic)](https://github.com/hack-ink/rsnap)
-[![GitHub code lines](https://tokei.rs/b1/github/hack-ink/rsnap)](https://github.com/hack-ink/rsnap)
+[![Language Checks](https://github.com/acgxv/rsnap/actions/workflows/language.yml/badge.svg?branch=main)](https://github.com/acgxv/rsnap/actions/workflows/language.yml)
+[![Release](https://github.com/acgxv/rsnap/actions/workflows/release.yml/badge.svg)](https://github.com/acgxv/rsnap/actions/workflows/release.yml)
+[![GitHub tag (latest by date)](https://img.shields.io/github/v/tag/acgxv/rsnap)](https://github.com/acgxv/rsnap/tags)
+[![GitHub last commit](https://img.shields.io/github/last-commit/acgxv/rsnap?color=red&style=plastic)](https://github.com/acgxv/rsnap)
+[![GitHub code lines](https://tokei.rs/b1/github/acgxv/rsnap)](https://github.com/acgxv/rsnap)
 
 https://github.com/user-attachments/assets/ff2fe84f-f551-40e8-919c-66ae8a61f8e7
 
@@ -88,7 +88,7 @@ Prototype / in active development.
 
 Download the latest macOS zip:
 
-<https://github.com/hack-ink/rsnap/releases/latest/download/rsnap-aarch64-apple-darwin.zip>
+<https://github.com/acgxv/rsnap/releases/latest/download/rsnap-aarch64-apple-darwin.zip>
 
 Unzip it and move `Rsnap.app` to `/Applications`.
 
@@ -99,7 +99,7 @@ with the Sparkle appcast configured.
 #### Build from Source
 
 ```sh
-git clone https://github.com/hack-ink/rsnap
+git clone https://github.com/acgxv/rsnap
 cd rsnap
 
 cargo build --workspace

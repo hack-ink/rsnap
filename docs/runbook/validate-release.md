@@ -4,7 +4,7 @@ description: "Validate Release documentation for Rsnap."
 type: "Runbook"
 status: active
 authority: normative
-owner: hack-ink/rsnap
+owner: acgxv/rsnap
 last_verified: 2026-07-07
 ---
 # Validate Release
@@ -126,13 +126,13 @@ user-entered annotation text.
 After the Release workflow succeeds:
 
 1. Download `rsnap-aarch64-apple-darwin.zip` from the GitHub release or from:
-   `https://github.com/hack-ink/rsnap/releases/latest/download/rsnap-aarch64-apple-darwin.zip`
+   `https://github.com/acgxv/rsnap/releases/latest/download/rsnap-aarch64-apple-darwin.zip`
 2. Unzip it and verify identity:
    - The app bundle is `Rsnap.app`.
    - `CFBundleName` and `CFBundleDisplayName` are `Rsnap`.
    - `CFBundleIdentifier` is `ink.hack.rsnap`.
    - `SUFeedURL` is
-     `https://github.com/hack-ink/rsnap/releases/latest/download/appcast.xml`.
+     `https://github.com/acgxv/rsnap/releases/latest/download/appcast.xml`.
    - `SUPublicEDKey` is present.
    - `Sparkle.framework` is present in `Contents/Frameworks`.
 3. Verify the signature:
@@ -154,7 +154,7 @@ this repository's GitHub Releases page.
 5. Confirm the appcast asset was published:
 
 ```sh
-curl -fsSL https://github.com/hack-ink/rsnap/releases/latest/download/appcast.xml \
+curl -fsSL https://github.com/acgxv/rsnap/releases/latest/download/appcast.xml \
   | grep -q 'sparkle:edSignature'
 ```
 

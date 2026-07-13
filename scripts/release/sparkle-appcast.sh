@@ -120,8 +120,8 @@ signature_fragment = os.environ["SPARKLE_SIGNATURE_FRAGMENT"].strip()
 archive_url = os.environ["SPARKLE_ARCHIVE_URL"].strip()
 release_notes_url = os.environ["SPARKLE_RELEASE_NOTES_URL"].strip()
 
-download_url = archive_url or f"https://github.com/hack-ink/rsnap/releases/download/{tag}/{archive}"
-release_url = release_notes_url or f"https://github.com/hack-ink/rsnap/releases/tag/{tag}"
+download_url = archive_url or f"https://github.com/acgxv/rsnap/releases/download/{tag}/{archive}"
+release_url = release_notes_url or f"https://github.com/acgxv/rsnap/releases/tag/{tag}"
 pub_date = email.utils.formatdate(usegmt=True)
 
 xml = dedent(
@@ -131,7 +131,7 @@ xml = dedent(
 	  xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
 	  <channel>
 	    <title>Rsnap Updates</title>
-	    <link>https://github.com/hack-ink/rsnap/releases</link>
+	    <link>https://github.com/acgxv/rsnap/releases</link>
 	    <description>Rsnap macOS app updates.</description>
 	    <language>en</language>
 	    <item>

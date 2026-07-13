@@ -4,7 +4,7 @@ description: "Rsnap App Identity Contract documentation for Rsnap."
 type: "Spec"
 status: active
 authority: normative
-owner: hack-ink/rsnap
+owner: acgxv/rsnap
 last_verified: 2026-07-06
 ---
 # Rsnap App Identity Contract
@@ -49,7 +49,7 @@ Defines:
 Keep these identifiers lower-case unless a separate migration explicitly changes their technical
 contract:
 
-- Repository slug and URLs: `hack-ink/rsnap`.
+- Repository slug and URLs: `acgxv/rsnap`.
 - Cargo package names, crate names, binary package selectors, and source paths such as
   `rsnap`, `rsnap-capture-core`, `rsnap-host-ffi`, and `apps/rsnap/`.
 - Environment variables and build-time constants such as `RSNAP_NATIVE_HOST_STAGE_DIR`.

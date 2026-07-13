@@ -4,7 +4,7 @@ description: "Drift audit for removal of the retired Rust overlay UI runtime and
 type: "Drift Audit"
 status: active
 authority: normative
-owner: hack-ink/rsnap
+owner: acgxv/rsnap
 last_verified: 2026-07-06
 ---
 
