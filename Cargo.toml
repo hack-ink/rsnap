@@ -9,7 +9,7 @@ edition     = "2024"
 homepage    = "https://hack.ink/rsnap"
 license     = "GPL-3.0"
 readme      = "README.md"
-repository  = "https://github.com/acgxv/rsnap"
+repository  = "https://github.com/acg-box/rsnap"
 version     = "0.3.0"
 
 [workspace.dependencies]

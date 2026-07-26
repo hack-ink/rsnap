@@ -4,7 +4,7 @@ description: "Documentation Policy documentation for Rsnap."
 type: "Policy"
 status: active
 authority: normative
-owner: acgxv/rsnap
+owner: acg-box/rsnap
 last_verified: 2026-07-06
 ---
 # Documentation Policy

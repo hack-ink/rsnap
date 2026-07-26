@@ -126,6 +126,9 @@ jobs:
       - name: Run Swift tests
         run: cargo make test-swift
 
+      - name: Run release workflow self-check
+        run: cargo make test-release
+
   toml-check:
     name: TOML check
     runs-on: ubuntu-latest

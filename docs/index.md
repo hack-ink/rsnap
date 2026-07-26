@@ -29,6 +29,8 @@ The active split below is by question type, not by human-versus-agent audience.
   `docs/spec/capture-session.md`
 - Need product display name, macOS app bundle identity, or lower-case identifier exceptions ->
   `docs/spec/app-identity.md`
+- Need tagged-release source, signing, notarization, Sparkle, artifact, or publication invariants ->
+  `docs/spec/release-distribution.md`
 - Need Settings, status-menu shortcut display, permission placement, Dock behavior, or Settings
   window semantics -> `docs/spec/settings.md`
 - Need telemetry fields, event names, metric names, or log correlation identifiers ->

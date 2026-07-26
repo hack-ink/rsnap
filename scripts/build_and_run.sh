@@ -26,7 +26,7 @@ APP_ICON_SOURCE="$ROOT_DIR/assets/app-icon/generated/app-icon.icns"
 APP_ICON_NAME="AppIcon.icns"
 STATUS_ICON_SOURCE="$ROOT_DIR/assets/tray-icon/generated/tray-icon-template.png"
 STATUS_ICON_NAME="StatusBarIcon.png"
-SPARKLE_APPCAST_URL="${RSNAP_SPARKLE_APPCAST_URL:-https://github.com/acgxv/rsnap/releases/latest/download/appcast.xml}"
+SPARKLE_APPCAST_URL="${RSNAP_SPARKLE_APPCAST_URL:-https://github.com/acg-box/rsnap/releases/latest/download/appcast.xml}"
 # The public update key is safe to ship in source. The override exists only for
 # local Sparkle smoke tests that generate a disposable key pair and appcast.
 SPARKLE_PUBLIC_ED_KEY="${RSNAP_SPARKLE_PUBLIC_ED_KEY:-$DEFAULT_SPARKLE_PUBLIC_ED_KEY}"
@@ -37,8 +37,12 @@ RUST_BUILD_ARGS=(-p rsnap-host-ffi)
 RESOLVED_SIGN_IDENTITY=""
 STAGED_APP_DIRTY=0
 
-RUST_PROFILE="final-release"
-SWIFT_CONFIGURATION="release"
+RUST_PROFILE="${RSNAP_NATIVE_HOST_RUST_PROFILE:-final-release}"
+SWIFT_CONFIGURATION="${RSNAP_NATIVE_HOST_SWIFT_CONFIGURATION:-release}"
+if [[ "$SWIFT_CONFIGURATION" != "debug" && "$SWIFT_CONFIGURATION" != "release" ]]; then
+	echo "error: RSNAP_NATIVE_HOST_SWIFT_CONFIGURATION must be debug or release" >&2
+	exit 2
+fi
 if [[ -z "${RSNAP_NATIVE_HOST_SWIFT_CLEAN:-}" ]]; then
 	if [[ "$SWIFT_CONFIGURATION" == "release" ]]; then
 		# SwiftPM can reuse stale release objects across local worktree rebuilds. Prefer a
@@ -64,7 +68,10 @@ APP_VERSION="${RSNAP_NATIVE_HOST_APP_VERSION:-}"
 if [[ -z "$APP_VERSION" ]]; then
 	APP_VERSION="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version *= *"\(.*\)"/\1/p' "$ROOT_DIR/Cargo.toml" | head -n 1)"
 fi
-APP_VERSION="${APP_VERSION:-0.2.5}"
+if [[ ! "$APP_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+	echo "error: native host app version must be stable SemVer: ${APP_VERSION:-missing}" >&2
+	exit 1
+fi
 
 relink_native_host_if_missing() {
 	local product_dir link_file swift_frameworks sdk swiftc
@@ -161,21 +168,35 @@ sync_framework_dir() {
 }
 
 stage_sparkle_framework() {
-	local source_framework=""
-	if [[ -d "$PACKAGE_DIR/.build/artifacts" ]]; then
-		source_framework="$(
-			find "$PACKAGE_DIR/.build/artifacts" \
-				-type d \
-				-name 'Sparkle.framework' \
-				-print \
-				-quit
-		)"
-	fi
-	if [[ -z "$source_framework" ]]; then
-		echo "error: Sparkle.framework was not found in native/macos-host/.build/artifacts." >&2
-		echo "error: run swift package resolve/build for the Sparkle SwiftPM artifact first." >&2
+	local source_framework="$BUILD_ROOT/Sparkle.framework"
+	if [[ ! -d "$source_framework" ]]; then
+		echo "error: Sparkle.framework was not found in the selected Swift build output." >&2
+		echo "error: expected $source_framework" >&2
 		exit 1
 	fi
+	python3 - "$PACKAGE_DIR/Package.resolved" "$source_framework" <<'PY'
+import json
+import plistlib
+import sys
+from pathlib import Path
+
+resolved_path = Path(sys.argv[1])
+framework = Path(sys.argv[2])
+resolved = json.loads(resolved_path.read_text(encoding="utf-8"))
+versions = [
+	pin.get("state", {}).get("version")
+	for pin in resolved.get("pins", [])
+	if pin.get("identity") == "sparkle"
+]
+if len(versions) != 1 or not isinstance(versions[0], str):
+	raise SystemExit("error: Package.resolved must contain one versioned Sparkle pin")
+with (framework / "Versions/Current/Resources/Info.plist").open("rb") as handle:
+	actual = plistlib.load(handle).get("CFBundleShortVersionString")
+if actual != versions[0]:
+	raise SystemExit(
+	f"error: selected Sparkle.framework version {actual!r} does not match lock {versions[0]}"
+	)
+PY
 	if sync_framework_dir "$source_framework" "$APP_FRAMEWORKS/Sparkle.framework"; then
 		STAGED_APP_DIRTY=1
 	fi
@@ -384,28 +405,23 @@ resolve_signing_identity() {
 }
 
 sign_staged_app_bundle() {
-	local requested_identity
+	local requested_identity entitlements_path
+	local -a sign_args
 	requested_identity="${RSNAP_NATIVE_HOST_SIGN_IDENTITY:-$DEFAULT_SIGN_IDENTITY}"
 	if [[ "$STAGED_APP_DIRTY" != "1" ]] && codesign --verify --deep --strict "$APP_BUNDLE" >/dev/null 2>&1; then
 		return
 	fi
 	if resolve_signing_identity; then
+		sign_args=(
+			--app "$APP_BUNDLE"
+			--identity "$RESOLVED_SIGN_IDENTITY"
+			--mode development
+		)
 		if [[ -f "$BUILD_ROOT/$EXECUTABLE_NAME-entitlement.plist" ]]; then
-			codesign \
-				--force \
-				--deep \
-				--options runtime \
-				--sign "$RESOLVED_SIGN_IDENTITY" \
-				--entitlements "$BUILD_ROOT/$EXECUTABLE_NAME-entitlement.plist" \
-				"$APP_BUNDLE"
-		else
-			codesign \
-				--force \
-				--deep \
-				--options runtime \
-				--sign "$RESOLVED_SIGN_IDENTITY" \
-				"$APP_BUNDLE"
+			entitlements_path="$BUILD_ROOT/$EXECUTABLE_NAME-entitlement.plist"
+			sign_args+=(--entitlements "$entitlements_path")
 		fi
+		"$ROOT_DIR/scripts/release/sign-macos-app.sh" "${sign_args[@]}"
 		return
 	fi
 
@@ -520,7 +536,9 @@ if [[ "$MODE" != "stage" ]]; then
 fi
 
 canonicalize_app_bundle_name
-if [[ "${RSNAP_NATIVE_HOST_FORCE_REBUILD:-0}" != "1" ]] && staged_bundle_is_current; then
+if [[ "${RSNAP_NATIVE_HOST_FORCE_REBUILD:-0}" != "1" \
+	&& "${RSNAP_NATIVE_HOST_SKIP_SIGNING:-0}" != "1" ]] \
+	&& staged_bundle_is_current; then
 	BUILD_ROOT=""
 	BUILD_BINARY="$APP_BINARY"
 else
@@ -528,20 +546,38 @@ else
 	if [[ "${RSNAP_NATIVE_HOST_SWIFT_CLEAN:-0}" == "1" ]]; then
 		swift package --package-path "$PACKAGE_DIR" clean
 	fi
-	BUILD_ROOT="$(RSNAP_HOST_FFI_LIB_DIR="$RUST_LIB_DIR" swift build --package-path "$PACKAGE_DIR" "${SWIFT_BUILD_FLAGS[@]}" --show-bin-path)"
+	BUILD_ROOT="$(
+		RSNAP_HOST_FFI_LIB_DIR="$RUST_LIB_DIR" \
+			swift build \
+			--package-path "$PACKAGE_DIR" \
+			--disable-automatic-resolution \
+			"${SWIFT_BUILD_FLAGS[@]}" \
+			--show-bin-path
+	)"
 	BUILD_BINARY="$BUILD_ROOT/$EXECUTABLE_NAME"
 	# SwiftPM does not track the external Rust static library as a product input. Remove the
 	# executable before building so Rust host-FFI changes are always relinked into the app bundle.
 	rm -f "$BUILD_BINARY"
 	RSNAP_HOST_FFI_LIB_DIR="$RUST_LIB_DIR" \
-		swift build --package-path "$PACKAGE_DIR" "${SWIFT_BUILD_FLAGS[@]}" --product "$EXECUTABLE_NAME"
+		swift build \
+		--package-path "$PACKAGE_DIR" \
+		--disable-automatic-resolution \
+		"${SWIFT_BUILD_FLAGS[@]}" \
+		--product "$EXECUTABLE_NAME"
 
 	if [[ ! -x "$BUILD_BINARY" ]]; then
 		relink_native_host_if_missing
 	fi
 
 	stage_app_bundle
-	sign_staged_app_bundle
+	if [[ "${RSNAP_NATIVE_HOST_SKIP_SIGNING:-0}" == "1" ]]; then
+		if [[ "$MODE" != "stage" && "$MODE" != "--stage" ]]; then
+			echo "error: RSNAP_NATIVE_HOST_SKIP_SIGNING is allowed only for stage mode" >&2
+			exit 2
+		fi
+	else
+		sign_staged_app_bundle
+	fi
 	write_stage_fingerprint
 fi
 

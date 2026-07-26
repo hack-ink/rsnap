@@ -1,5 +1,15 @@
 # Documentation Log
 
+## 2026-07-26
+
+- Added the release distribution contract for source provenance, Developer ID signing,
+  mandatory notarization, Sparkle metadata, checksums, and draft publication.
+- Changed the release runbook so incomplete notarization credentials and unnotarized packages
+  fail closed.
+- Recorded `release` as the single GitHub environment for release jobs and named the required
+  Rsnap-specific Sparkle secret.
+- Updated the canonical repository owner and public URLs to `acg-box/rsnap`.
+
 ## 2026-07-07
 
 - Documented the quick screenshot no-focus contract: quick screenshot must preserve transient target

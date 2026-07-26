@@ -4,7 +4,7 @@ description: "Rsnap Annotation Pen Contract documentation for Rsnap."
 type: "Spec"
 status: active
 authority: normative
-owner: acgxv/rsnap
+owner: acg-box/rsnap
 last_verified: 2026-07-06
 ---
 # Rsnap Annotation Pen Contract

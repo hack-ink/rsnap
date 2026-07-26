@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 COMMON_ROOT="$(cd "$(git -C "$ROOT_DIR" rev-parse --git-common-dir)/.." && pwd)"
-WORK_ROOT="${RSNAP_SPARKLE_SMOKE_WORK_ROOT:-$COMMON_ROOT/target/rsnap-sparkle-update-smoke}"
+WORK_PARENT="${RSNAP_SPARKLE_SMOKE_WORK_ROOT:-$COMMON_ROOT/target}"
 ARCHIVE_NAME="rsnap-aarch64-apple-darwin.zip"
 OLD_VERSION="${RSNAP_SPARKLE_SMOKE_OLD_VERSION:-0.1.2}"
 NEW_VERSION="${RSNAP_SPARKLE_SMOKE_NEW_VERSION:-99.0.0}"
@@ -85,24 +85,17 @@ run_self_check() {
 	cat >"$fake_sign_update" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-file=""
-while [[ $# -gt 0 ]]; do
-	case "$1" in
-		--ed-key-file)
-			read -r _private_key
-			shift 2
-			;;
-		*)
-			file="$1"
-			shift
-			;;
-	esac
-done
-size="$(wc -c <"$file" | tr -d ' ')"
-printf 'sparkle:edSignature="fake-signature" length="%s"\n' "$size"
+read -r _private_key
+if [[ " $* " == *" --verify "* ]]; then
+	exit 0
+fi
+python3 - <<'PY'
+import base64
+print(base64.b64encode(bytes(64)).decode("ascii"))
+PY
 SH
 	chmod +x "$fake_sign_update"
-	SPARKLE_PRIVATE_ED_KEY="fake-private-key" \
+	RSNAP_SPARKLE_PRIVATE_ED_KEY="fake-private-key" \
 		SPARKLE_SIGN_UPDATE="$fake_sign_update" \
 		SPARKLE_ARCHIVE_URL="http://127.0.0.1:9/$ARCHIVE_NAME" \
 		SPARKLE_RELEASE_NOTES_URL="http://127.0.0.1:9/release-notes.html" \
@@ -118,7 +111,7 @@ import xml.etree.ElementTree as ET
 path = sys.argv[1]
 text = open(path, encoding="utf-8").read()
 assert "http://127.0.0.1:9/rsnap-aarch64-apple-darwin.zip" in text
-assert 'sparkle:edSignature="fake-signature"' in text
+assert "sparkle:edSignature=" in text
 assert 'length="9"' in text
 assert ET.parse(path).getroot().tag == "rss"
 print("sparkle update local self-check ok")
@@ -134,6 +127,8 @@ if [[ -z "$PORT" ]]; then
 	PORT="$(choose_port)"
 fi
 
+mkdir -p "$WORK_PARENT"
+WORK_ROOT="$(mktemp -d "$WORK_PARENT/rsnap-sparkle-update-smoke.XXXXXX")"
 SERVER_DIR="$WORK_ROOT/server"
 OLD_STAGE_DIR="$WORK_ROOT/old"
 NEW_STAGE_DIR="$WORK_ROOT/new"
@@ -143,10 +138,9 @@ ARCHIVE_URL="http://$HOST:$PORT/$ARCHIVE_NAME"
 RELEASE_NOTES_URL="http://$HOST:$PORT/release-notes.html"
 
 sparkle_key_output="$(generate_test_keys)"
-SPARKLE_PRIVATE_ED_KEY="$(printf '%s\n' "$sparkle_key_output" | sed -n '1p')"
+RSNAP_SPARKLE_PRIVATE_ED_KEY="$(printf '%s\n' "$sparkle_key_output" | sed -n '1p')"
 SPARKLE_PUBLIC_ED_KEY="$(printf '%s\n' "$sparkle_key_output" | sed -n '2p')"
 
-rm -rf "$WORK_ROOT"
 mkdir -p "$SERVER_DIR" "$OLD_STAGE_DIR" "$NEW_STAGE_DIR"
 
 cat >"$SERVER_DIR/release-notes.html" <<HTML
@@ -166,7 +160,7 @@ ditto -c -k --sequesterRsrc --keepParent \
 	"$NEW_STAGE_DIR/Rsnap.app" \
 	"$SERVER_DIR/$ARCHIVE_NAME"
 
-SPARKLE_PRIVATE_ED_KEY="$SPARKLE_PRIVATE_ED_KEY" \
+RSNAP_SPARKLE_PRIVATE_ED_KEY="$RSNAP_SPARKLE_PRIVATE_ED_KEY" \
 	SPARKLE_ARCHIVE_URL="$ARCHIVE_URL" \
 	SPARKLE_RELEASE_NOTES_URL="$RELEASE_NOTES_URL" \
 	"$ROOT_DIR/scripts/release/sparkle-appcast.sh" \

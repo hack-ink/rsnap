@@ -4,8 +4,8 @@ description: "Validate Release documentation for Rsnap."
 type: "Runbook"
 status: active
 authority: normative
-owner: acgxv/rsnap
-last_verified: 2026-07-07
+owner: acg-box/rsnap
+last_verified: 2026-07-26
 ---
 # Validate Release
 
@@ -14,36 +14,46 @@ Goal: Execute the final release-candidate checks before publishing a tagged Rsna
 Read this when: You are preparing a formal Rsnap release tag or verifying the published release
 artifacts immediately after the tag workflow completes.
 
-Preconditions: `main` is clean and synced, the intended release version is committed in
-`Cargo.toml`, GitHub Actions macOS signing release secrets are configured, optional Apple notary
-credentials are configured only when a notarized build is required, the Release workflow runs the
-macOS package job on `macos-26` with Apple Swift 6.2 or newer so Liquid Glass API support is
-compiled into the app, and a logged-in macOS desktop session is available for native-host smoke and
-manual checks.
+Preconditions: `main` is clean and synced. The intended release version is committed in
+`Cargo.toml` and `Cargo.lock`. The repository has a protected GitHub environment named `release`.
+All required signing, Team API notary, and Rsnap Sparkle secrets are configured in that environment.
+The Release workflow uses the standard GitHub-hosted `macos-26` ARM64 runner. A logged-in macOS
+desktop session is available for native-host smoke and manual checks.
 
-Depends on: `docs/spec/app-identity.md`; `docs/spec/settings.md`; `docs/spec/telemetry.md`;
-`docs/runbook/performance-validation.md`; `.github/workflows/release.yml`
+Depends on: `docs/spec/release-distribution.md`; `docs/spec/app-identity.md`;
+`docs/spec/settings.md`; `docs/spec/telemetry.md`; `docs/runbook/performance-validation.md`;
+`.github/workflows/release.yml`
 
-Verification: Local checks, dedicated macOS smoke/perf evidence, release workflow success, signed
-macOS zip acceptance, optional notarization evidence when notary credentials are configured, and
-manual first-run/user-flow validation.
+Verification: Local checks, dedicated macOS smoke/perf evidence, source-provenance validation,
+Developer ID signing evidence, accepted notarization, a valid staple, Gatekeeper acceptance,
+Sparkle and checksum validation, draft-asset validation, and manual first-run/user-flow validation.
 
 ## Before Tagging
 
 1. Confirm the release version:
    - `Cargo.toml` `workspace.package.version` matches the intended tag without a leading `v`.
+   - Rsnap workspace package versions in `Cargo.lock` match the intended version.
+   - `Package.swift` and `Package.resolved` contain the same exact Sparkle version.
    - No existing local or remote tag already uses `v<version>`.
-2. Confirm release credentials:
-   - Apple signing certificate secrets are available to the Release workflow.
-   - Sparkle update signing is configured: `SUPublicEDKey` is checked into
-     `scripts/build_and_run.sh`, and `SPARKLE_PRIVATE_ED_KEY` is available to the Release workflow
-     for signing the published update archive.
-   - Apple notary credentials are optional for current preview releases; when absent, the Release workflow still
-     publishes a signed but unnotarized macOS zip.
+   - The future annotated tag commit is present on `origin/main`.
+2. Confirm the `release` environment and its required secrets:
+   - `APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64`
+   - `APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD`
+   - `APPLE_DEVELOPER_ID_APPLICATION_IDENTITY`
+   - `APPLE_NOTARY_KEY_ID`
+   - `APPLE_NOTARY_ISSUER_ID`
+   - `APPLE_NOTARY_KEY_P8`
+   - `RSNAP_SPARKLE_PRIVATE_ED_KEY`
+   - The Apple identity is an exact Developer ID Application identity.
+   - The notary key is a Team API key. Its issuer ID is mandatory.
+   - The Rsnap Sparkle private key derives the `SUPublicEDKey` in `scripts/build_and_run.sh`.
+     Do not use a generic Sparkle secret or a private key for another application.
 3. Confirm local gates:
    - `cargo make checks`
    - `cargo make test-host-reset`
    - `cargo make test-macos-native-host-stage`
+   - `cargo make test-release`
+   - `actionlint .github/workflows/*.yml`
 4. Confirm dedicated desktop validation:
    - `scripts/smoke/macos.sh`
    - `scripts/perf/macos.sh`
@@ -74,12 +84,12 @@ Validate these user-visible flows:
   fullscreen fallback.
 - Frozen toolbar tools: pointer, pen, arrow, text, mosaic, spotlight, undo, redo, auto-center,
   Recognize Text, Scroll Capture, copy, and save.
-- For the v0.2.5 native-host release, Scroll Capture must stay absent for window-click and
-  fullscreen freezes, remain available after dragged-region movement or auto-center, start from a
-  dragged-region freeze via toolbar or plain `s`, and pass the functional scroll path in
+- Scroll Capture must stay absent for window-click and fullscreen freezes, remain available after
+  dragged-region movement or auto-center, start from a dragged-region freeze through the toolbar
+  or plain `s`, and pass the functional scroll path in
   `docs/runbook/scroll-capture-recovery-plan.md`. Scroll toolbar Liquid Glass cadence, dynamic
   backdrop-change evidence, preview export latency, and cached copy/export timing are part of the
-  v0.2.5 publish gate.
+  current Scroll Capture publish gate.
 - Light and dark appearance; Classic Glass and Liquid Glass where the OS and current build support
   Liquid Glass.
 - Settings -> About update rows: `Auto Update` and `Release Version` must use Title Case for row
@@ -114,50 +124,67 @@ user-entered annotation text.
 ## Tag And Publish
 
 1. Push the annotated release tag only after local and manual RC validation pass.
-2. Watch the Release workflow for the exact tag.
-3. Treat a build, signing, or packaging failure as a release blocker.
-4. Treat notarization failure as a release blocker only when notary credentials are configured.
-5. The Release workflow publishes the signed macOS zip and `appcast.xml` to the GitHub release.
-   It notarizes and staples the app only when notary credentials are configured. It does not
-   publish crates.io packages or non-macOS desktop archives for current preview releases.
+2. Confirm that the source-validation job accepts the exact tag, Cargo and Sparkle versions, peeled
+   commit, checkout, and `origin/main` ancestry.
+3. Confirm that the `macos-26` job completes release tests, release build, inside-out signing,
+   accepted notarization, staple validation, recursive signature verification, and Gatekeeper
+   assessment. Record the notarization submission UUID from the log. If the wait times out, use
+   that UUID to inspect the Apple submission; do not publish or staple the package.
+4. Confirm that the Ubuntu job creates a draft, uploads exactly the ZIP, appcast, and checksum,
+   rechecks the remote annotated tag commit immediately before publication, validates the Ed25519
+   signature, remote metadata, and downloaded bytes, and only then makes the release public. Draft
+   API URLs can contain one temporary `untagged-*` slug, but appcast URLs must contain the canonical
+   `acg-box/rsnap` repository and final tag.
+5. Treat any test, build, signing, timestamp, notarization, staple, Gatekeeper, appcast, checksum,
+   upload, or draft-validation failure as a release blocker. Do not publish a package from a failed
+   run.
+6. The workflow does not publish crates.io packages or non-macOS desktop archives.
+7. If publication succeeded but the final API response was lost, rerun the workflow. The publish
+   script validates the existing public metadata and downloaded public bytes without changing the
+   release. It does not compare the public assets with the new nondeterministic signed build.
 
 ## Published Artifact Check
 
 After the Release workflow succeeds:
 
 1. Download `rsnap-aarch64-apple-darwin.zip` from the GitHub release or from:
-   `https://github.com/acgxv/rsnap/releases/latest/download/rsnap-aarch64-apple-darwin.zip`
-2. Unzip it and verify identity:
+   `https://github.com/acg-box/rsnap/releases/latest/download/rsnap-aarch64-apple-darwin.zip`
+   Also download
+   `https://github.com/acg-box/rsnap/releases/latest/download/rsnap-aarch64-apple-darwin.zip.sha256`.
+2. Verify the checksum before extraction:
+
+```sh
+shasum -a 256 -c rsnap-aarch64-apple-darwin.zip.sha256
+```
+
+3. Unzip it and verify identity:
    - The app bundle is `Rsnap.app`.
    - `CFBundleName` and `CFBundleDisplayName` are `Rsnap`.
    - `CFBundleIdentifier` is `ink.hack.rsnap`.
    - `SUFeedURL` is
-     `https://github.com/acgxv/rsnap/releases/latest/download/appcast.xml`.
+     `https://github.com/acg-box/rsnap/releases/latest/download/appcast.xml`.
    - `SUPublicEDKey` is present.
    - `Sparkle.framework` is present in `Contents/Frameworks`.
-3. Verify the signature:
+4. Verify the signature and staple:
 
 ```sh
 codesign --verify --deep --strict /path/to/Rsnap.app
+xcrun stapler validate -v /path/to/Rsnap.app
 ```
 
-4. For a notarized build, verify Gatekeeper acceptance:
+5. Verify Gatekeeper acceptance:
 
 ```sh
 spctl -a -vvv --type exec /path/to/Rsnap.app
 ```
 
-For a signed but unnotarized build, Gatekeeper may still block a quarantined download. Use the
-quarantine override documented in `README.md` only for a bundle built locally or downloaded from
-this repository's GitHub Releases page.
-
-5. Confirm the appcast asset was published:
+6. Confirm the appcast asset was published:
 
 ```sh
-curl -fsSL https://github.com/acgxv/rsnap/releases/latest/download/appcast.xml \
+curl -fsSL https://github.com/acg-box/rsnap/releases/latest/download/appcast.xml \
   | grep -q 'sparkle:edSignature'
 ```
 
-6. Launch the downloaded app and repeat a minimal capture, toolbar, OCR, copy, save, and About
+7. Launch the downloaded app and repeat a minimal capture, toolbar, OCR, copy, save, and About
    update check.
-7. Confirm release notes, the macOS zip, and the appcast were published.
+8. Confirm release notes, the macOS ZIP, appcast, and checksum were published.
