@@ -9,6 +9,18 @@
 - Recorded `release` as the single GitHub environment for release jobs and named the required
   Rsnap-specific Sparkle secret.
 - Updated the canonical repository owner and public URLs to `acg-box/rsnap`.
+- Split release build and signing across separate `macos-26` runners so tests and dependencies never
+  share a runner with Apple or Sparkle release secrets.
+- Required the release tag commit to equal the current `origin/main` tip and prevented stable
+  release-version or latest-pointer regression.
+- Replaced dependency-provided Sparkle `sign_update` execution with a checked-in CryptoKit Ed25519
+  signer.
+- Recorded organization-wide release-secret visibility as an accepted single-operator tradeoff and
+  added a value-free Infisical topology contract and evidence record.
+- Added GitHub rules that limit `v*` tag creation to the operator and make each created release tag
+  immutable.
+- Recorded that public `v0.3.0` predates the hardened contract, preserves the Rsnap Sparkle key,
+  and must not be treated as Developer ID, notarization, staple, or checksum evidence.
 
 ## 2026-07-07
 

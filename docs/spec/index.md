@@ -60,6 +60,8 @@ Then keep the body explicit:
   identity, and stable lower-case technical identifiers
 - `docs/spec/release-distribution.md` for tagged-release source, macOS distribution trust,
   artifact, credential, and draft-publication requirements
+- `docs/spec/release-secret-topology.json` for the value-free version 2 Infisical project,
+  profile, identity, and access-binding contract
 - `docs/spec/settings.md` for Settings, status-menu, shortcut, permission, Dock, and Settings
   window behavior
 - `docs/spec/platform-host-boundary.md` for the normative ownership boundary between native hosts

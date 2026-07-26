@@ -8,9 +8,13 @@ APPCAST_NAME="appcast.xml"
 CHECKSUM_NAME="${ARCHIVE_NAME}.sha256"
 
 required_values=(
+	RSNAP_RELEASE_COMMIT
 	RSNAP_RELEASE_VERSION
 	RSNAP_RELEASE_TAG
 	RSNAP_SPARKLE_VERSION
+	RSNAP_UNSIGNED_APP_ARCHIVE
+	RSNAP_UNSIGNED_APP_ARCHIVE_SHA256
+	RSNAP_UNSIGNED_MANIFEST
 	APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64
 	APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD
 	APPLE_DEVELOPER_ID_APPLICATION_IDENTITY
@@ -29,17 +33,33 @@ if [[ -n "${SPARKLE_PRIVATE_ED_KEY:-}" ]]; then
 	echo "error: generic SPARKLE_PRIVATE_ED_KEY is forbidden for Rsnap releases" >&2
 	exit 1
 fi
+if [[ -n "${SPARKLE_SIGN_UPDATE:-}" ]]; then
+	echo "error: dependency-provided Sparkle sign_update is forbidden for Rsnap releases" >&2
+	exit 1
+fi
 if [[ "$RSNAP_RELEASE_TAG" != "v$RSNAP_RELEASE_VERSION" ]]; then
 	echo "error: release tag and version do not match" >&2
+	exit 1
+fi
+if [[ ! "$RSNAP_RELEASE_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+	echo "error: release commit must be a full lowercase Git object SHA" >&2
 	exit 1
 fi
 if [[ "$APPLE_DEVELOPER_ID_APPLICATION_IDENTITY" != "Developer ID Application: "* ]]; then
 	echo "error: signing identity must be an exact Developer ID Application identity" >&2
 	exit 1
 fi
+if [[ ! "$APPLE_NOTARY_KEY_ID" =~ ^[A-Z0-9]{10}$ ]]; then
+	echo "error: Apple notary key id must contain exactly 10 uppercase letters or digits" >&2
+	exit 1
+fi
+if [[ ! "$APPLE_NOTARY_ISSUER_ID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+	echo "error: Apple notary issuer id must be a UUID" >&2
+	exit 1
+fi
 
-# Keep release credentials in non-exported shell variables. Build tools and dependencies must not
-# inherit long-lived Apple or Sparkle secrets from the workflow step environment.
+# Keep release credentials in non-exported shell variables. Artifact-validation and signing
+# subprocesses must not inherit long-lived Apple or Sparkle secrets unless they consume one.
 developer_id_p12_base64="$APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64"
 developer_id_p12_password="$APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD"
 developer_id_identity="$APPLE_DEVELOPER_ID_APPLICATION_IDENTITY"
@@ -56,6 +76,10 @@ unset \
 	APPLE_NOTARY_KEY_P8 \
 	RSNAP_SPARKLE_PRIVATE_ED_KEY
 
+# Secret-consuming subprocesses do not need GitHub runner command files. Do not let them persist
+# values or mutate a later workflow step through the runner command protocol.
+unset GITHUB_ENV GITHUB_OUTPUT GITHUB_PATH GITHUB_STEP_SUMMARY
+
 runner_arch="${RUNNER_ARCH:-}"
 uname_bin="${RSNAP_UNAME_BIN:-/usr/bin/uname}"
 if [[ "$runner_arch" != "ARM64" || "$("$uname_bin" -m)" != "arm64" ]]; then
@@ -69,9 +93,9 @@ xcrun_bin="${RSNAP_XCRUN_BIN:-/usr/bin/xcrun}"
 ditto_bin="${RSNAP_DITTO_BIN:-/usr/bin/ditto}"
 codesign_bin="${RSNAP_CODESIGN_BIN:-/usr/bin/codesign}"
 spctl_bin="${RSNAP_SPCTL_BIN:-/usr/sbin/spctl}"
-build_script="${RSNAP_BUILD_AND_RUN_BIN:-$ROOT_DIR/scripts/build_and_run.sh}"
 sign_script="${RSNAP_SIGN_APP_BIN:-$ROOT_DIR/scripts/release/sign-macos-app.sh}"
 key_verifier="${RSNAP_VERIFY_SPARKLE_KEY_BIN:-$ROOT_DIR/scripts/release/verify-sparkle-key.swift}"
+sparkle_signer="${RSNAP_SPARKLE_SIGNER_BIN:-$ROOT_DIR/scripts/release/sign-sparkle-update.swift}"
 appcast_script="${RSNAP_APPCAST_BIN:-$ROOT_DIR/scripts/release/sparkle-appcast.sh}"
 artifact_validator="${RSNAP_ARTIFACT_VALIDATOR_BIN:-$ROOT_DIR/scripts/release/validate-release-artifacts.py}"
 
@@ -82,9 +106,9 @@ for executable in \
 	"$ditto_bin" \
 	"$codesign_bin" \
 	"$spctl_bin" \
-	"$build_script" \
 	"$sign_script" \
 	"$key_verifier" \
+	"$sparkle_signer" \
 	"$appcast_script" \
 	"$artifact_validator"; do
 	if [[ ! -x "$executable" ]]; then
@@ -130,18 +154,50 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Build and validate the unsigned app before any credential is written to disk. The Apple and
-# Sparkle secret names were unset above, so build tools cannot inherit them.
-RSNAP_NATIVE_HOST_APP_VERSION="$RSNAP_RELEASE_VERSION" \
-	RSNAP_NATIVE_HOST_FORCE_REBUILD=1 \
-	RSNAP_NATIVE_HOST_RUST_PROFILE=final-release \
-	RSNAP_NATIVE_HOST_SKIP_SIGNING=1 \
-	RSNAP_NATIVE_HOST_STAGE_DIR="$stage_dir" \
-	RSNAP_NATIVE_HOST_SWIFT_CLEAN=1 \
-	RSNAP_NATIVE_HOST_SWIFT_CONFIGURATION=release \
-	"$build_script" stage
+# The unsigned app comes from a separate credential-free runner. Validate every ZIP entry before
+# extraction. Do not execute a tool from the handoff artifact.
+unsigned_input_dir="$(dirname "$RSNAP_UNSIGNED_APP_ARCHIVE")"
+if [[ "$(dirname "$RSNAP_UNSIGNED_MANIFEST")" != "$unsigned_input_dir" ]]; then
+	echo "error: unsigned archive and manifest must share one handoff directory" >&2
+	exit 1
+fi
+shopt -s dotglob nullglob
+unsigned_input_entries=("$unsigned_input_dir"/*)
+shopt -u dotglob nullglob
+if [[ "${#unsigned_input_entries[@]}" != "2" \
+	|| ! -f "$RSNAP_UNSIGNED_APP_ARCHIVE" \
+	|| -L "$RSNAP_UNSIGNED_APP_ARCHIVE" \
+	|| ! -f "$RSNAP_UNSIGNED_MANIFEST" \
+	|| -L "$RSNAP_UNSIGNED_MANIFEST" ]]; then
+	echo "error: unsigned handoff directory must contain only the regular archive and manifest" >&2
+	exit 1
+fi
+"$artifact_validator" \
+	--source-commit "$RSNAP_RELEASE_COMMIT" \
+	--unsigned-archive "$RSNAP_UNSIGNED_APP_ARCHIVE" \
+	--unsigned-archive-sha256 "$RSNAP_UNSIGNED_APP_ARCHIVE_SHA256" \
+	--unsigned-manifest "$RSNAP_UNSIGNED_MANIFEST" \
+	--repository "$CANONICAL_REPOSITORY" \
+	--sparkle-version "$RSNAP_SPARKLE_VERSION" \
+	--tag "$RSNAP_RELEASE_TAG" \
+	--version "$RSNAP_RELEASE_VERSION"
+
+mkdir -p "$stage_dir"
+"$ditto_bin" -x -k \
+	--norsrc \
+	--noextattr \
+	--noqtn \
+	--noacl \
+	--nopersistRootless \
+	"$RSNAP_UNSIGNED_APP_ARCHIVE" \
+	"$stage_dir"
 
 app_path="$stage_dir/Rsnap.app"
+stage_entries=("$stage_dir"/*)
+if [[ "${#stage_entries[@]}" != "1" || "${stage_entries[0]}" != "$app_path" ]]; then
+	echo "error: unsigned handoff must extract only Rsnap.app" >&2
+	exit 1
+fi
 "$artifact_validator" \
 	--app "$app_path" \
 	--repository "$CANONICAL_REPOSITORY" \
@@ -289,6 +345,8 @@ if [[ ! -s "$archive_path" ]]; then
 	exit 1
 fi
 RSNAP_SPARKLE_PRIVATE_ED_KEY="$sparkle_private_key" \
+	RSNAP_SPARKLE_PUBLIC_ED_KEY="$sparkle_public_key" \
+	RSNAP_SPARKLE_SIGNER_BIN="$sparkle_signer" \
 	"$appcast_script" \
 	--archive "$archive_path" \
 	--appcast "$appcast_path" \

@@ -10,6 +10,8 @@ env:
   MACOS_RELEASE_ASSET: rsnap-aarch64-apple-darwin.zip
   MACOS_APPCAST_ASSET: appcast.xml
   MACOS_CHECKSUM_ASSET: rsnap-aarch64-apple-darwin.zip.sha256
+  MACOS_UNSIGNED_ASSET: rsnap-unsigned-aarch64-apple-darwin.zip
+  MACOS_UNSIGNED_MANIFEST: rsnap-unsigned-aarch64-apple-darwin.json
 
 on:
   push:
@@ -55,12 +57,13 @@ jobs:
             --github-output "$GITHUB_OUTPUT"
 
   build-macos:
-    name: Test and package notarized macOS app
+    name: Test and build unsigned macOS app
     needs: validate-release
     runs-on: macos-26
-    timeout-minutes: 75
-    environment:
-      name: release
+    timeout-minutes: 60
+    outputs:
+      unsigned_archive_sha256: ${{ steps.unsigned-build.outputs.archive_sha256 }}
+      unsigned_artifact_id: ${{ steps.unsigned-upload.outputs.artifact-id }}
     env:
       RSNAP_RELEASE_COMMIT: ${{ needs.validate-release.outputs.tag_commit }}
       RSNAP_RELEASE_TAG: ${{ github.ref_name }}
@@ -99,16 +102,76 @@ jobs:
       - name: Run release tests
         run: cargo make test-macos-release
 
-      - name: Build, sign, notarize, staple, and package
+      - name: Build validated unsigned app handoff
+        id: unsigned-build
         env:
+          RSNAP_UNSIGNED_OUTPUT_DIR: ${{ runner.temp }}/rsnap-unsigned-output
+        run: scripts/release/build-unsigned-macos.sh
+
+      - name: Upload immutable unsigned app handoff
+        id: unsigned-upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rsnap-unsigned-${{ needs.validate-release.outputs.tag_commit }}
+          path: |
+            ${{ runner.temp }}/rsnap-unsigned-output/${{ env.MACOS_UNSIGNED_ASSET }}
+            ${{ runner.temp }}/rsnap-unsigned-output/${{ env.MACOS_UNSIGNED_MANIFEST }}
+          if-no-files-found: error
+          retention-days: 1
+
+  sign-macos:
+    name: Sign and notarize validated macOS app
+    needs: [validate-release, build-macos]
+    runs-on: macos-26
+    timeout-minutes: 45
+    environment:
+      name: release
+    env:
+      RSNAP_RELEASE_COMMIT: ${{ needs.validate-release.outputs.tag_commit }}
+      RSNAP_RELEASE_TAG: ${{ github.ref_name }}
+      RSNAP_RELEASE_VERSION: ${{ needs.validate-release.outputs.version }}
+      RSNAP_SPARKLE_VERSION: ${{ needs.validate-release.outputs.sparkle_version }}
+    steps:
+      - name: Fetch validated signing source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify signing source and Apple toolchain
+        env:
+          EXPECTED_COMMIT: ${{ needs.validate-release.outputs.tag_commit }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse 'HEAD^{commit}')" = "$EXPECTED_COMMIT"
+          test "$RUNNER_ARCH" = "ARM64"
+          test "$(uname -m)" = "arm64"
+          sw_vers
+          swift --version
+          xcodebuild -version
+
+      - name: Download immutable unsigned app handoff
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.build-macos.outputs.unsigned_artifact_id }}
+          path: ${{ runner.temp }}/rsnap-unsigned-input
+          digest-mismatch: error
+
+      - name: Validate, sign, notarize, staple, and package
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
           APPLE_DEVELOPER_ID_APPLICATION_IDENTITY: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_IDENTITY }}
           APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64 }}
           APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD }}
           APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
           APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
           APPLE_NOTARY_KEY_P8: ${{ secrets.APPLE_NOTARY_KEY_P8 }}
-          RSNAP_RELEASE_OUTPUT_DIR: dist
+          RSNAP_RELEASE_OUTPUT_DIR: ${{ runner.temp }}/rsnap-release-output
           RSNAP_SPARKLE_PRIVATE_ED_KEY: ${{ secrets.RSNAP_SPARKLE_PRIVATE_ED_KEY }}
+          RSNAP_UNSIGNED_APP_ARCHIVE: ${{ runner.temp }}/rsnap-unsigned-input/${{ env.MACOS_UNSIGNED_ASSET }}
+          RSNAP_UNSIGNED_APP_ARCHIVE_SHA256: ${{ needs.build-macos.outputs.unsigned_archive_sha256 }}
+          RSNAP_UNSIGNED_MANIFEST: ${{ runner.temp }}/rsnap-unsigned-input/${{ env.MACOS_UNSIGNED_MANIFEST }}
         run: scripts/release/package-macos.sh
 
       - name: Upload notarized release assets
@@ -116,15 +179,15 @@ jobs:
         with:
           name: rsnap-aarch64-apple-darwin
           path: |
-            dist/${{ env.MACOS_RELEASE_ASSET }}
-            dist/${{ env.MACOS_APPCAST_ASSET }}
-            dist/${{ env.MACOS_CHECKSUM_ASSET }}
+            ${{ runner.temp }}/rsnap-release-output/${{ env.MACOS_RELEASE_ASSET }}
+            ${{ runner.temp }}/rsnap-release-output/${{ env.MACOS_APPCAST_ASSET }}
+            ${{ runner.temp }}/rsnap-release-output/${{ env.MACOS_CHECKSUM_ASSET }}
           if-no-files-found: error
           retention-days: 1
 
   publish-release:
     name: Validate draft and publish release
-    needs: [validate-release, build-macos]
+    needs: [validate-release, sign-macos]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment:

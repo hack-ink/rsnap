@@ -224,15 +224,16 @@ def validate_git_source(
 		f"{event_object}^{{commit}}",
 	)
 	head_commit = git_output(repo_root, "rev-parse", "--verify", "HEAD^{commit}")
-	git_output(repo_root, "rev-parse", "--verify", f"{base_ref}^{{commit}}")
+	base_commit = git_output(repo_root, "rev-parse", "--verify", f"{base_ref}^{{commit}}")
 
 	if tag_commit != event_commit:
 		fail(f"tag commit {tag_commit} does not match event commit {event_commit}")
 	if tag_commit != head_commit:
 		fail(f"checked-out commit {head_commit} does not match tag commit {tag_commit}")
-	ancestor = git(repo_root, "merge-base", "--is-ancestor", tag_commit, base_ref, check=False)
-	if ancestor.returncode != 0:
-		fail(f"tag commit {tag_commit} is not reachable from {base_ref}")
+	if tag_commit != base_commit:
+		fail(
+			f"tag commit {tag_commit} must equal current {base_ref} tip {base_commit}"
+		)
 	return tag_commit
 
 

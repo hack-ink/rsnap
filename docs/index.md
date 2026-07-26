@@ -31,6 +31,10 @@ The active split below is by question type, not by human-versus-agent audience.
   `docs/spec/app-identity.md`
 - Need tagged-release source, signing, notarization, Sparkle, artifact, or publication invariants ->
   `docs/spec/release-distribution.md`
+- Need the rationale for organization-wide release secret visibility ->
+  `docs/decisions/organization-release-secret-visibility.md`
+- Need the value-free Infisical release profile, identity, or access-binding shape ->
+  `docs/spec/release-secret-topology.json`
 - Need Settings, status-menu shortcut display, permission placement, Dock behavior, or Settings
   window semantics -> `docs/spec/settings.md`
 - Need telemetry fields, event names, metric names, or log correlation identifiers ->

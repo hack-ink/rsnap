@@ -86,11 +86,15 @@ Prototype / in active development.
 
 #### Download macOS Build
 
-Download the latest macOS zip:
+Historical public macOS zip:
 
 <https://github.com/acg-box/rsnap/releases/latest/download/rsnap-aarch64-apple-darwin.zip>
 
-Unzip it and move `Rsnap.app` to `/Applications`.
+Do not install the current public `v0.3.0` ZIP as a trusted distribution build. It predates the
+hardened release contract, uses an Apple Development signature instead of Developer ID
+Application, has no stapled notarization ticket or checksum asset, and fails Gatekeeper assessment.
+Do not bypass that failure. Build from source or wait for the first release produced by the
+hardened workflow. This repository change does not replace historical bytes or publish a release.
 
 Release builds include Sparkle-based updates. Use `Settings...` -> `About` -> `Check` for the
 standard macOS update flow; the About Auto Update mode defaults to `Install` for signed release builds
@@ -108,20 +112,21 @@ cargo run -p rsnap
 
 #### macOS release trust
 
-Tagged macOS release builds are signed with Developer ID Application, use Hardened Runtime and a
-secure timestamp, and are notarized and stapled before the final ZIP is created. The release
-workflow does not publish a signed-only or unnotarized package.
+The current release contract requires each new tagged macOS build to be signed with Developer ID
+Application, use Hardened Runtime and a secure timestamp, and be notarized and stapled before the
+final ZIP is created. The hardened workflow does not publish a signed-only or unnotarized package.
 
-You can verify the downloaded ZIP before you open it:
+For a release produced by the hardened workflow, verify the versioned ZIP before you open it:
 
 ```sh
-curl -fsSLO https://github.com/acg-box/rsnap/releases/latest/download/rsnap-aarch64-apple-darwin.zip
-curl -fsSLO https://github.com/acg-box/rsnap/releases/latest/download/rsnap-aarch64-apple-darwin.zip.sha256
+VERSION=vX.Y.Z
+curl -fsSLO "https://github.com/acg-box/rsnap/releases/download/$VERSION/rsnap-aarch64-apple-darwin.zip"
+curl -fsSLO "https://github.com/acg-box/rsnap/releases/download/$VERSION/rsnap-aarch64-apple-darwin.zip.sha256"
 shasum -a 256 -c rsnap-aarch64-apple-darwin.zip.sha256
 ```
 
 Do not remove the quarantine attribute to bypass a failed Gatekeeper assessment. Report a blocked
-tagged release as a release defect.
+release produced by the hardened workflow as a release defect.
 
 ### macOS permissions
 

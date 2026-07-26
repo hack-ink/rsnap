@@ -76,27 +76,16 @@ PY
 }
 
 run_self_check() {
-	local tmpdir archive appcast fake_sign_update
+	local tmpdir archive appcast sparkle_key_output private_key public_key
 	tmpdir="$(mktemp -d)"
 	archive="$tmpdir/$ARCHIVE_NAME"
 	appcast="$tmpdir/appcast.xml"
-	fake_sign_update="$tmpdir/sign_update"
 	printf 'zip-bytes' >"$archive"
-	cat >"$fake_sign_update" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-read -r _private_key
-if [[ " $* " == *" --verify "* ]]; then
-	exit 0
-fi
-python3 - <<'PY'
-import base64
-print(base64.b64encode(bytes(64)).decode("ascii"))
-PY
-SH
-	chmod +x "$fake_sign_update"
-	RSNAP_SPARKLE_PRIVATE_ED_KEY="fake-private-key" \
-		SPARKLE_SIGN_UPDATE="$fake_sign_update" \
+	sparkle_key_output="$(generate_test_keys)"
+	private_key="$(printf '%s\n' "$sparkle_key_output" | sed -n '1p')"
+	public_key="$(printf '%s\n' "$sparkle_key_output" | sed -n '2p')"
+	RSNAP_SPARKLE_PRIVATE_ED_KEY="$private_key" \
+		RSNAP_SPARKLE_PUBLIC_ED_KEY="$public_key" \
 		SPARKLE_ARCHIVE_URL="http://127.0.0.1:9/$ARCHIVE_NAME" \
 		SPARKLE_RELEASE_NOTES_URL="http://127.0.0.1:9/release-notes.html" \
 		"$ROOT_DIR/scripts/release/sparkle-appcast.sh" \
@@ -161,6 +150,7 @@ ditto -c -k --sequesterRsrc --keepParent \
 	"$SERVER_DIR/$ARCHIVE_NAME"
 
 RSNAP_SPARKLE_PRIVATE_ED_KEY="$RSNAP_SPARKLE_PRIVATE_ED_KEY" \
+	RSNAP_SPARKLE_PUBLIC_ED_KEY="$SPARKLE_PUBLIC_ED_KEY" \
 	SPARKLE_ARCHIVE_URL="$ARCHIVE_URL" \
 	SPARKLE_RELEASE_NOTES_URL="$RELEASE_NOTES_URL" \
 	"$ROOT_DIR/scripts/release/sparkle-appcast.sh" \

@@ -44,12 +44,18 @@ fi
 gh_bin="${RSNAP_GH_BIN:-$(command -v gh || true)}"
 python_bin="${RSNAP_PYTHON_BIN:-$(command -v python3 || true)}"
 artifact_validator="${RSNAP_ARTIFACT_VALIDATOR_BIN:-$ROOT_DIR/scripts/release/validate-release-artifacts.py}"
-for executable in "$gh_bin" "$python_bin" "$artifact_validator"; do
+order_validator="${RSNAP_RELEASE_ORDER_VALIDATOR_BIN:-$ROOT_DIR/scripts/release/validate-release-order.py}"
+for executable in "$gh_bin" "$python_bin" "$artifact_validator" "$order_validator"; do
 	if [[ -z "$executable" || ! -x "$executable" ]]; then
 		echo "error: required publish tool is not executable: ${executable:-missing}" >&2
 		exit 1
 	fi
 done
+inventory_limit="${RSNAP_RELEASE_INVENTORY_LIMIT:-1000}"
+if [[ ! "$inventory_limit" =~ ^[1-9][0-9]*$ ]]; then
+	echo "error: release inventory limit must be a positive integer" >&2
+	exit 1
+fi
 
 input_dir="${RSNAP_RELEASE_INPUT_DIR:-$ROOT_DIR/artifacts}"
 archive_path="$input_dir/$ARCHIVE_NAME"
@@ -68,6 +74,7 @@ assets_json="$work_root/assets.json"
 view_json="$work_root/view.json"
 tag_ref_json="$work_root/tag-ref.json"
 tag_object_json="$work_root/tag-object.json"
+release_inventory_json="$work_root/release-inventory.json"
 remote_dir="$work_root/remote"
 mkdir -p "$remote_dir"
 cleanup() {
@@ -119,15 +126,24 @@ if target.get("sha") != sys.argv[3]:
 PY
 }
 
+validate_release_order() {
+	"$gh_bin" release list \
+		--repo "$GITHUB_REPOSITORY" \
+		--limit "$inventory_limit" \
+		--json tagName,isDraft,isPrerelease,isLatest \
+		>"$release_inventory_json"
+	"$order_validator" \
+		--releases-json "$release_inventory_json" \
+		--tag "$RSNAP_RELEASE_TAG" \
+		--version "$RSNAP_RELEASE_VERSION" \
+		--inventory-limit "$inventory_limit"
+}
+
 validate_remote_tag
 
-release_state="draft"
-if "$gh_bin" release view "$RSNAP_RELEASE_TAG" \
-	--repo "$GITHUB_REPOSITORY" \
-	--json databaseId,isDraft,isPrerelease,tagName \
-	>"$view_json" 2>/dev/null; then
-	:
-else
+initial_release_state="$(validate_release_order)"
+case "$initial_release_state" in
+absent)
 	"$gh_bin" release create "$RSNAP_RELEASE_TAG" \
 		--repo "$GITHUB_REPOSITORY" \
 		--draft \
@@ -135,11 +151,21 @@ else
 		--verify-tag \
 		--target "$RSNAP_RELEASE_COMMIT" \
 		--title "Rsnap $RSNAP_RELEASE_TAG"
-	"$gh_bin" release view "$RSNAP_RELEASE_TAG" \
-		--repo "$GITHUB_REPOSITORY" \
-		--json databaseId,isDraft,isPrerelease,tagName \
-		>"$view_json"
-fi
+	expected_release_state="draft"
+	;;
+draft | published)
+	expected_release_state="$initial_release_state"
+	;;
+*)
+	echo "error: release order validator returned an invalid state" >&2
+	exit 1
+	;;
+esac
+
+"$gh_bin" release view "$RSNAP_RELEASE_TAG" \
+	--repo "$GITHUB_REPOSITORY" \
+	--json databaseId,isDraft,isPrerelease,tagName \
+	>"$view_json"
 
 release_view="$("$python_bin" - "$view_json" "$RSNAP_RELEASE_TAG" <<'PY'
 import json
@@ -165,6 +191,10 @@ PY
 )"
 release_state="${release_view%%$'\t'*}"
 release_id="${release_view#*$'\t'}"
+if [[ "$release_state" != "$expected_release_state" ]]; then
+	echo "error: release state changed after the initial release inventory" >&2
+	exit 1
+fi
 
 if [[ "$release_state" == "draft" ]]; then
 	# Upload only the three validated release assets. The release remains a draft.
@@ -225,6 +255,12 @@ fi
 
 validate_remote_tag
 
+final_release_state="$(validate_release_order)"
+if [[ "$final_release_state" != "$release_state" ]]; then
+	echo "error: release state changed before final publication" >&2
+	exit 1
+fi
+
 if [[ "$release_state" == "published" ]]; then
 	echo "Existing public release and all downloaded bytes passed validation."
 	exit 0
@@ -232,10 +268,11 @@ fi
 
 echo "Draft release and all uploaded bytes passed validation; publishing $RSNAP_RELEASE_TAG."
 # Keep this as the final fallible operation. Any earlier failure leaves the release private.
+# Legacy latest selection prevents a concurrent higher stable release from losing the latest pointer.
 "$gh_bin" api \
 	-H "X-GitHub-Api-Version: $API_VERSION" \
 	--method PATCH \
 	-F draft=false \
-	-f make_latest=true \
+	-f make_latest=legacy \
 	--silent \
 	"repos/$GITHUB_REPOSITORY/releases/$release_id"

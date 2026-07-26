@@ -37,10 +37,18 @@ Sparkle and checksum validation, draft-asset validation, and manual first-run/us
    - Rsnap workspace package versions in `Cargo.lock` match the intended version.
    - `Package.swift` and `Package.resolved` contain the same exact Sparkle version.
    - No existing local or remote tag already uses `v<version>`.
-   - The future annotated tag commit is present on `origin/main`.
+   - The future annotated tag commit equals the current `origin/main` tip. An older ancestor is not
+     accepted.
+   - GitHub ruleset `release-tags-authorized-creation` is active for `refs/tags/v*` and gives only
+     user `acgxv` an `always` bypass for tag creation.
+   - GitHub ruleset `release-tags-immutable` is active for `refs/tags/v*`, has no bypass, and
+     prevents both update and deletion.
 2. Confirm the `release` environment and organization secret binding:
-   - The protected `release` environment requires reviewer `acgxv`, permits self-review, and has one
-     custom deployment policy with name `v*` and type `tag`.
+   - The protected `release` environment normally requires reviewer `acgxv`, permits self-review,
+     and has one deployment branch/tag policy with name `v*` and type `tag`.
+   - Repository administrators can force a deployment past the environment protection rules. Treat
+     that single-operator recovery action as an audited exception. It does not skip the workflow's
+     source or artifact validators.
    - The environment is the deployment protection boundary. It does not store the long-lived release
      secrets.
    - Each release secret is an `acg-box` organization Actions secret with visibility `all`:
@@ -54,11 +62,25 @@ Sparkle and checksum validation, draft-asset validation, and manual first-run/us
    - No repository or environment secret has one of the organization-secret names.
    - `SPARKLE_PUBLIC_ED_KEY` is not required because the public key is checked in.
    - The Apple identity is an exact Developer ID Application identity.
-   - The notary key is a Team API key. Its issuer ID is mandatory.
+   - `APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64` is the P12 file encoded as one RFC 4648 base64
+     value without whitespace. Its password is
+     `APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD`.
+   - `APPLE_DEVELOPER_ID_APPLICATION_IDENTITY` is the exact Keychain identity text in the form
+     `Developer ID Application: <name> (<team-id>)`.
+   - The notary key is a Team App Store Connect API key, not an individual key. Its 10-character
+     uppercase alphanumeric key ID, issuer UUID, and complete P8 text are
+     `APPLE_NOTARY_KEY_ID`, `APPLE_NOTARY_ISSUER_ID`, and `APPLE_NOTARY_KEY_P8`.
    - The Rsnap Sparkle private key derives the `SUPublicEDKey` in `scripts/build_and_run.sh`. Its
      organization-wide visibility does not make it reusable by another application. Use a separate,
      application-specific secret name and value for each application.
+   - Visibility `all` lets every current and future `acg-box` repository workflow request this key.
+     The prefix is not access control. Review new repositories and workflow changes before they can
+     enter the organization credential boundary.
+   - After this workflow lands on `main`, delete the legacy repository secret
+     `SPARKLE_PRIVATE_ED_KEY`. Do not promote that generic name to organization scope because a
+     different application's workflow could consume the Rsnap key.
 3. Confirm the personal Infisical source record:
+   - `docs/spec/release-secret-topology.json` is valid version 2 desired state.
    - Repository root `.infisical.json` pins domain `http://127.0.0.1:51890`, project
      `f55a1068-0ae7-4dee-a0c0-62bfe71016fc`, and environment `prod`.
    - Machine identity `rsnap-release-provisioner` can read the Rsnap project and cannot read a
@@ -69,6 +91,8 @@ Sparkle and checksum validation, draft-asset validation, and manual first-run/us
      key. Never print or export either value during this check.
    - GitHub-hosted runners use the GitHub organization copy. They do not connect to the loopback
      Infisical instance.
+   - `docs/evidence/release-secret-topology-2026-07-26.md` contains the current value-free provider
+     and consumer evidence.
 4. Confirm local gates:
    - `cargo make checks`
    - `cargo make test-host-reset`
@@ -80,6 +104,29 @@ Sparkle and checksum validation, draft-asset validation, and manual first-run/us
    - `scripts/perf/macos.sh`
    - If scroll-capture correctness changed, follow the deterministic test, perf, and native-smoke
      sequence in `docs/runbook/performance-validation.md`.
+
+## After Landing Secret Cleanup
+
+Complete this sequence after the workflow lands on `main` and before the first formal release tag:
+
+1. Confirm that `.github/workflows/release.yml` on `main` requests
+   `secrets.RSNAP_SPARKLE_PRIVATE_ED_KEY` and does not request
+   `secrets.SPARKLE_PRIVATE_ED_KEY`.
+2. Confirm that the `acg-box` organization secret `RSNAP_SPARKLE_PRIVATE_ED_KEY` has visibility
+   `all`, and that no repository or `release` environment secret shadows that exact name.
+3. Confirm the value-free canary result in
+   `docs/evidence/release-secret-topology-2026-07-26.md`.
+4. Delete only the exact compatibility repository secret:
+
+```sh
+gh secret delete SPARKLE_PRIVATE_ED_KEY --repo acg-box/rsnap
+```
+
+5. List the organization, repository, and environment secret metadata again. Confirm that the
+   generic repository secret is absent and update the value-free evidence verdict. Do not create a
+   generic organization alias.
+6. Keep the GitHub redirect from `hack-ink/rsnap` to `acg-box/rsnap` intact until the installed
+   `v0.3.0` population has upgraded. Do not create a repository or fork at the old location.
 
 ## Manual RC Smoke
 
@@ -146,21 +193,26 @@ user-entered annotation text.
 
 1. Push the annotated release tag only after local and manual RC validation pass.
 2. Confirm that the source-validation job accepts the exact tag, Cargo and Sparkle versions, peeled
-   commit, checkout, and `origin/main` ancestry.
-3. Confirm that the `macos-26` job completes release tests, release build, inside-out signing,
-   accepted notarization, staple validation, recursive signature verification, and Gatekeeper
-   assessment. Record the notarization submission UUID from the log. If the wait times out, use
-   that UUID to inspect the Apple submission; do not publish or staple the package.
-4. Confirm that the Ubuntu job creates a draft, uploads exactly the ZIP, appcast, and checksum,
+   commit, checkout, and exact `origin/main` tip.
+3. Confirm that the credential-free `macos-26` job completes release tests, the release build,
+   bundle validation, and the immutable unsigned handoff without a release environment or release
+   secret.
+4. Confirm that the fresh `macos-26` signing job downloads the handoff by artifact ID, verifies its
+   digest and metadata, performs inside-out signing, receives accepted notarization, staples the
+   app, and passes recursive signature verification and Gatekeeper assessment. Record the
+   notarization submission UUID from the log. If the wait times out, use that UUID to inspect the
+   Apple submission; do not publish or staple the package.
+5. Confirm that the Ubuntu job proves the target version is newer than the highest published stable
+   version, creates a draft, uploads exactly the ZIP, appcast, and checksum,
    rechecks the remote annotated tag commit immediately before publication, validates the Ed25519
-   signature, remote metadata, and downloaded bytes, and only then makes the release public. Draft
-   API URLs can contain one temporary `untagged-*` slug, but appcast URLs must contain the canonical
-   `acg-box/rsnap` repository and final tag.
-5. Treat any test, build, signing, timestamp, notarization, staple, Gatekeeper, appcast, checksum,
+   signature, remote metadata, downloaded bytes, release order, and latest pointer, and only then
+   makes the release public. Draft API URLs can contain one temporary `untagged-*` slug, but appcast
+   URLs must contain the canonical `acg-box/rsnap` repository and final tag.
+6. Treat any test, build, signing, timestamp, notarization, staple, Gatekeeper, appcast, checksum,
    upload, or draft-validation failure as a release blocker. Do not publish a package from a failed
    run.
-6. The workflow does not publish crates.io packages or non-macOS desktop archives.
-7. If publication succeeded but the final API response was lost, rerun the workflow. The publish
+7. The workflow does not publish crates.io packages or non-macOS desktop archives.
+8. If publication succeeded but the final API response was lost, rerun the workflow. The publish
    script validates the existing public metadata and downloaded public bytes without changing the
    release. It does not compare the public assets with the new nondeterministic signed build.
 

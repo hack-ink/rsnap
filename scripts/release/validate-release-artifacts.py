@@ -12,12 +12,13 @@ import os
 import plistlib
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
 import xml.etree.ElementTree as ET
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 
@@ -26,6 +27,8 @@ APP_NAME = "Rsnap.app"
 APP_EXECUTABLE = "RsnapNativeHost"
 APP_BUNDLE_ID = "ink.hack.rsnap"
 ARCHIVE_NAME = "rsnap-aarch64-apple-darwin.zip"
+UNSIGNED_ARCHIVE_NAME = "rsnap-unsigned-aarch64-apple-darwin.zip"
+UNSIGNED_MANIFEST_NAME = "rsnap-unsigned-aarch64-apple-darwin.json"
 APPCAST_NAME = "appcast.xml"
 CHECKSUM_NAME = f"{ARCHIVE_NAME}.sha256"
 SPARKLE_NAMESPACE = "http://www.andymatuschak.org/xml-namespaces/sparkle"
@@ -34,6 +37,29 @@ SEMVER_COMPONENT = r"(?:0|[1-9][0-9]*)"
 STABLE_VERSION_RE = re.compile(
 	rf"^{SEMVER_COMPONENT}\.{SEMVER_COMPONENT}\.{SEMVER_COMPONENT}$"
 )
+MAX_UNSIGNED_ARCHIVE_ENTRIES = 20_000
+MAX_UNSIGNED_ARCHIVE_UNCOMPRESSED_BYTES = 1 << 30
+EXPECTED_APP_SYMLINKS = {
+	"Contents/Frameworks/Sparkle.framework/Autoupdate": "Versions/Current/Autoupdate",
+	"Contents/Frameworks/Sparkle.framework/Headers": "Versions/Current/Headers",
+	"Contents/Frameworks/Sparkle.framework/Modules": "Versions/Current/Modules",
+	"Contents/Frameworks/Sparkle.framework/PrivateHeaders": (
+		"Versions/Current/PrivateHeaders"
+	),
+	"Contents/Frameworks/Sparkle.framework/Resources": "Versions/Current/Resources",
+	"Contents/Frameworks/Sparkle.framework/Sparkle": "Versions/Current/Sparkle",
+	"Contents/Frameworks/Sparkle.framework/Updater.app": "Versions/Current/Updater.app",
+	"Contents/Frameworks/Sparkle.framework/Versions/Current": "B",
+	"Contents/Frameworks/Sparkle.framework/XPCServices": "Versions/Current/XPCServices",
+}
+EXPECTED_APP_EXECUTABLES = {
+	"Contents/MacOS/RsnapNativeHost",
+	"Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate",
+	"Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle",
+	"Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app/Contents/MacOS/Updater",
+	"Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc/Contents/MacOS/Downloader",
+	"Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc/Contents/MacOS/Installer",
+}
 
 
 class ValidationError(RuntimeError):
@@ -47,6 +73,10 @@ def parse_args() -> argparse.Namespace:
 	parser.add_argument("--tag", required=True)
 	parser.add_argument("--repository", required=True)
 	parser.add_argument("--app", type=Path)
+	parser.add_argument("--source-commit")
+	parser.add_argument("--unsigned-archive", type=Path)
+	parser.add_argument("--unsigned-archive-sha256")
+	parser.add_argument("--unsigned-manifest", type=Path)
 	parser.add_argument("--archive", type=Path)
 	parser.add_argument("--appcast", type=Path)
 	parser.add_argument("--checksum", type=Path)
@@ -144,6 +174,29 @@ def validate_app(path: Path, *, version: str, sparkle_version: str, repository: 
 	framework_plist = read_plist_file(version_root / "Resources/Info.plist")
 	validate_sparkle_plist(framework_plist, sparkle_version=sparkle_version)
 
+	actual_symlinks = {
+		candidate.relative_to(path).as_posix(): candidate.readlink().as_posix()
+		for candidate in path.rglob("*")
+		if candidate.is_symlink()
+	}
+	if actual_symlinks != EXPECTED_APP_SYMLINKS:
+		fail(
+			"app symlinks do not match the fixed Sparkle graph: "
+			f"{sorted(actual_symlinks.items())}"
+		)
+	actual_executables = {
+		candidate.relative_to(path).as_posix()
+		for candidate in path.rglob("*")
+		if not candidate.is_symlink()
+		and candidate.is_file()
+		and candidate.stat().st_mode & 0o111
+	}
+	if actual_executables != EXPECTED_APP_EXECUTABLES:
+		fail(
+			"app executables do not match the fixed release code graph: "
+			f"{sorted(actual_executables)}"
+		)
+
 
 def zip_read(archive: zipfile.ZipFile, member: str) -> bytes:
 	try:
@@ -151,6 +204,166 @@ def zip_read(archive: zipfile.ZipFile, member: str) -> bytes:
 	except KeyError:
 		fail(f"release archive is missing {member}")
 	return b""
+
+
+def validate_unsigned_archive_safety(archive: zipfile.ZipFile) -> None:
+	infos = archive.infolist()
+	if not infos or len(infos) > MAX_UNSIGNED_ARCHIVE_ENTRIES:
+		fail("unsigned app archive has an invalid entry count")
+
+	names: set[str] = set()
+	entry_paths: set[str] = set()
+	total_size = 0
+	symlinks: dict[str, str] = {}
+	executables: set[str] = set()
+	for info in infos:
+		name = info.filename
+		if not name or "\\" in name or "\0" in name:
+			fail(f"unsigned app archive has an unsafe entry name: {name!r}")
+		entry_name = name[:-1] if name.endswith("/") else name
+		entry_path = PurePosixPath(entry_name)
+		if (
+			entry_path.is_absolute()
+			or any(part in ("", ".", "..") for part in entry_path.parts)
+			or any(part.startswith(".") for part in entry_path.parts)
+			or entry_path.as_posix() != entry_name
+			or not entry_path.parts
+			or entry_path.parts[0] != APP_NAME
+		):
+			fail(f"unsigned app archive has an unsafe entry path: {name!r}")
+		if name in names:
+			fail(f"unsigned app archive has a duplicate entry: {name}")
+		names.add(name)
+		if entry_name in entry_paths:
+			fail(f"unsigned app archive has a duplicate normalized path: {entry_name}")
+		entry_paths.add(entry_name)
+		if info.flag_bits & 0x1:
+			fail(f"unsigned app archive entry must not be encrypted: {name}")
+
+		mode = info.external_attr >> 16
+		kind = stat.S_IFMT(mode)
+		if mode & (stat.S_ISUID | stat.S_ISGID | stat.S_ISVTX):
+			fail(f"unsigned app archive entry has special permission bits: {name}")
+		if info.is_dir():
+			if kind != stat.S_IFDIR:
+				fail(f"unsigned app archive directory has an invalid type: {name}")
+			if info.file_size != 0:
+				fail(f"unsigned app archive directory must be empty: {name}")
+			continue
+		if kind == stat.S_IFLNK:
+			if info.file_size > 256:
+				fail(f"unsigned app archive symlink target is too long: {name}")
+			relative_name = PurePosixPath(*entry_path.parts[1:]).as_posix()
+			try:
+				target = archive.read(info).decode("utf-8")
+			except UnicodeDecodeError as error:
+				fail(f"unsigned app archive symlink is not UTF-8: {name}: {error}")
+			symlinks[relative_name] = target
+			continue
+		if kind != stat.S_IFREG:
+			fail(f"unsigned app archive contains a special file: {name}")
+		total_size += info.file_size
+		if total_size > MAX_UNSIGNED_ARCHIVE_UNCOMPRESSED_BYTES:
+			fail("unsigned app archive exceeds the uncompressed size limit")
+		if mode & 0o111:
+			executables.add(PurePosixPath(*entry_path.parts[1:]).as_posix())
+			if info.file_size == 0:
+				fail(f"unsigned app archive executable is empty: {name}")
+
+	if symlinks != EXPECTED_APP_SYMLINKS:
+		fail(
+			"unsigned app archive symlinks do not match the fixed Sparkle graph: "
+			f"{sorted(symlinks.items())}"
+		)
+	if executables != EXPECTED_APP_EXECUTABLES:
+		fail(
+			"unsigned app archive executables do not match the fixed release code graph: "
+			f"{sorted(executables)}"
+		)
+	bad_member = archive.testzip()
+	if bad_member is not None:
+		fail(f"unsigned app archive has an invalid CRC: {bad_member}")
+
+
+def validate_unsigned_archive_bundle(
+	path: Path,
+	*,
+	version: str,
+	sparkle_version: str,
+	repository: str,
+	expected_sha256: str | None,
+) -> None:
+	if path.name != UNSIGNED_ARCHIVE_NAME or not path.is_file() or path.is_symlink():
+		fail(f"unsigned app archive must be an existing {UNSIGNED_ARCHIVE_NAME}: {path}")
+	if expected_sha256 is not None:
+		if re.fullmatch(r"[0-9a-f]{64}", expected_sha256) is None:
+			fail("unsigned app archive SHA-256 must be 64 lowercase hexadecimal characters")
+		if sha256(path) != expected_sha256:
+			fail("unsigned app archive SHA-256 does not match the build job output")
+	try:
+		with zipfile.ZipFile(path) as archive:
+			validate_unsigned_archive_safety(archive)
+			main_plist = read_plist_bytes(
+				zip_read(archive, f"{APP_NAME}/Contents/Info.plist"),
+				f"{path}:{APP_NAME}/Contents/Info.plist",
+			)
+			validate_main_plist(main_plist, version=version, repository=repository)
+			framework_plist = read_plist_bytes(
+				zip_read(
+					archive,
+					f"{APP_NAME}/Contents/Frameworks/Sparkle.framework/Versions/B/"
+					"Resources/Info.plist",
+				),
+				f"{path}:Sparkle.framework/Versions/B/Resources/Info.plist",
+			)
+			validate_sparkle_plist(framework_plist, sparkle_version=sparkle_version)
+	except zipfile.BadZipFile as error:
+		fail(f"invalid unsigned app ZIP: {error}")
+
+
+def validate_unsigned_manifest(
+	path: Path,
+	*,
+	archive: Path,
+	archive_sha256: str,
+	source_commit: str,
+	version: str,
+	sparkle_version: str,
+	tag: str,
+	repository: str,
+) -> None:
+	if path.name != UNSIGNED_MANIFEST_NAME or not path.is_file() or path.is_symlink():
+		fail(f"unsigned handoff manifest must be an existing {UNSIGNED_MANIFEST_NAME}: {path}")
+	manifest = read_json(path)
+	if not isinstance(manifest, dict) or set(manifest) != {
+		"schema",
+		"repository",
+		"source_commit",
+		"tag",
+		"version",
+		"sparkle_version",
+		"archive",
+	}:
+		fail("unsigned handoff manifest has an invalid top-level shape")
+	if manifest.get("schema") != "rsnap-unsigned-macos-handoff/1":
+		fail("unsigned handoff manifest has an unsupported schema")
+	expected_values = {
+		"repository": repository,
+		"source_commit": source_commit,
+		"tag": tag,
+		"version": version,
+		"sparkle_version": sparkle_version,
+	}
+	for key, expected in expected_values.items():
+		if manifest.get(key) != expected:
+			fail(f"unsigned handoff manifest {key} does not match validated release input")
+	archive_entry = manifest.get("archive")
+	if not isinstance(archive_entry, dict) or set(archive_entry) != {"name", "sha256"}:
+		fail("unsigned handoff manifest archive entry has an invalid shape")
+	if archive_entry.get("name") != archive.name:
+		fail("unsigned handoff manifest archive name does not match the downloaded archive")
+	if archive_entry.get("sha256") != archive_sha256:
+		fail("unsigned handoff manifest archive SHA-256 does not match the build job output")
 
 
 def validate_archive_bundle(
@@ -424,6 +637,43 @@ def main() -> int:
 		fail(f"Sparkle version is not stable SemVer: {args.sparkle_version}")
 	if args.tag != f"v{args.version}":
 		fail(f"release tag {args.tag} does not match version {args.version}")
+	if (
+		args.source_commit is not None
+		and re.fullmatch(r"[0-9a-f]{40}", args.source_commit) is None
+	):
+		fail("source commit must be a full lowercase Git object SHA")
+	if args.unsigned_archive is not None:
+		validate_unsigned_archive_bundle(
+			args.unsigned_archive,
+			version=args.version,
+			sparkle_version=args.sparkle_version,
+			repository=args.repository,
+			expected_sha256=args.unsigned_archive_sha256,
+		)
+	elif args.unsigned_archive_sha256 is not None:
+		fail("--unsigned-archive-sha256 requires --unsigned-archive")
+	unsigned_binding = (args.unsigned_manifest, args.source_commit)
+	if any(value is not None for value in unsigned_binding):
+		if (
+			args.unsigned_manifest is None
+			or args.source_commit is None
+			or args.unsigned_archive is None
+			or args.unsigned_archive_sha256 is None
+		):
+			fail(
+				"unsigned handoff binding requires --unsigned-manifest, --source-commit, "
+				"--unsigned-archive, and --unsigned-archive-sha256"
+			)
+		validate_unsigned_manifest(
+			args.unsigned_manifest,
+			archive=args.unsigned_archive,
+			archive_sha256=args.unsigned_archive_sha256,
+			source_commit=args.source_commit,
+			version=args.version,
+			sparkle_version=args.sparkle_version,
+			tag=args.tag,
+			repository=args.repository,
+		)
 
 	if args.app is not None:
 		validate_app(
@@ -481,8 +731,8 @@ def main() -> int:
 	elif args.release_state is not None:
 		fail("--release-state requires --release-json and --assets-json")
 
-	if args.app is None and archive is None:
-		fail("at least one of --app or --archive is required")
+	if args.app is None and args.unsigned_archive is None and archive is None:
+		fail("at least one of --app, --unsigned-archive, or --archive is required")
 	return 0
 
 

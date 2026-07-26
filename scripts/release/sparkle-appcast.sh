@@ -9,10 +9,13 @@ Creates a Sparkle appcast for the signed Rsnap macOS release archive.
 
 Required environment:
   RSNAP_SPARKLE_PRIVATE_ED_KEY
-                          Rsnap private EdDSA key used by Sparkle sign_update
+                          Rsnap private EdDSA key used to sign the update
+  RSNAP_SPARKLE_PUBLIC_ED_KEY
+                          Rsnap public EdDSA key embedded in the app bundle
 
 Optional environment:
-  SPARKLE_SIGN_UPDATE     explicit path to Sparkle's sign_update tool
+  RSNAP_SPARKLE_SIGNER_BIN
+                          explicit path to the checked-in CryptoKit signer
   SPARKLE_ARCHIVE_URL     explicit appcast download URL for the release archive
   SPARKLE_RELEASE_NOTES_URL
                           explicit appcast release notes URL
@@ -77,35 +80,30 @@ if [[ -z "${RSNAP_SPARKLE_PRIVATE_ED_KEY:-}" ]]; then
 	echo "error: RSNAP_SPARKLE_PRIVATE_ED_KEY is required to sign the update archive" >&2
 	exit 1
 fi
+if [[ -z "${RSNAP_SPARKLE_PUBLIC_ED_KEY:-}" ]]; then
+	echo "error: RSNAP_SPARKLE_PUBLIC_ED_KEY is required to sign the update archive" >&2
+	exit 1
+fi
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-sign_update="${SPARKLE_SIGN_UPDATE:-}"
-if [[ -z "$sign_update" ]]; then
-	sign_update="$(
-		find "$repo_root/native/macos-host/.build/artifacts" \
-			-type f \
-			-path '*/bin/sign_update' \
-			-print \
-			-quit
-	)"
-fi
-
-if [[ -z "$sign_update" || ! -x "$sign_update" ]]; then
-	echo "error: Sparkle sign_update tool was not found or is not executable" >&2
-	echo "error: run swift package resolve/build for native/macos-host first" >&2
+signer="${RSNAP_SPARKLE_SIGNER_BIN:-$repo_root/scripts/release/sign-sparkle-update.swift}"
+if [[ ! -x "$signer" ]]; then
+	echo "error: checked-in Sparkle signer is not executable: $signer" >&2
 	exit 1
 fi
+
+sparkle_private_key="$RSNAP_SPARKLE_PRIVATE_ED_KEY"
+sparkle_public_key="$RSNAP_SPARKLE_PUBLIC_ED_KEY"
+unset RSNAP_SPARKLE_PRIVATE_ED_KEY RSNAP_SPARKLE_PUBLIC_ED_KEY
 
 signature="$(
-	printf '%s\n' "$RSNAP_SPARKLE_PRIVATE_ED_KEY" \
-		| "$sign_update" --ed-key-file - -p "$archive"
+	printf '%s\n' "$sparkle_private_key" \
+		| "$signer" "$archive" "$sparkle_public_key"
 )"
 if [[ -z "$signature" || "$signature" == *$'\n'* || "$signature" == *$'\r'* ]]; then
-	echo "error: Sparkle sign_update returned an invalid signature" >&2
+	echo "error: Sparkle signer returned an invalid signature" >&2
 	exit 1
 fi
-printf '%s\n' "$RSNAP_SPARKLE_PRIVATE_ED_KEY" \
-	| "$sign_update" --verify --ed-key-file - "$archive" "$signature"
 archive_length="$(wc -c <"$archive" | tr -d '[:space:]')"
 
 VERSION="$version" \

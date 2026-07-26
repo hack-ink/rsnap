@@ -51,3 +51,5 @@ Then keep the body decision-oriented:
   style-capsule expansion from moving the primary Frozen toolbar
 - `docs/decisions/scroll-capture-architecture.md` for the accepted layered scroll-capture target
   architecture based on CleanShot/Xnip/Snagit/Shottr/ScrollSnap prior art and Rsnap live failures
+- `docs/decisions/organization-release-secret-visibility.md` for the accepted organization-wide
+  GitHub Actions secret scope and the separate application update-trust boundaries
