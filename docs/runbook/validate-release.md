@@ -17,9 +17,10 @@ artifacts immediately after the tag workflow completes.
 Preconditions: `main` is clean and synced. The intended release version is committed in
 `Cargo.toml` and `Cargo.lock`. The repository has a protected GitHub environment named `release`.
 All required signing, Team API notary, and Rsnap Sparkle values are GitHub Actions organization
-secrets in `acg-box`, with `selected` repository access granted to `acg-box/rsnap`. The Release
-workflow uses the standard GitHub-hosted `macos-26` ARM64 runner. A logged-in macOS desktop session
-is available for native-host smoke and manual checks.
+secrets in the single-operator `acg-box` organization, with visibility `all`. The personal Infisical
+release project contains the operator source record for the same values. The Release workflow uses
+the standard GitHub-hosted `macos-26` ARM64 runner. A logged-in macOS desktop session is available
+for native-host smoke and manual checks.
 
 Depends on: `docs/spec/release-distribution.md`; `docs/spec/app-identity.md`;
 `docs/spec/settings.md`; `docs/spec/telemetry.md`; `docs/runbook/performance-validation.md`;
@@ -38,11 +39,11 @@ Sparkle and checksum validation, draft-asset validation, and manual first-run/us
    - No existing local or remote tag already uses `v<version>`.
    - The future annotated tag commit is present on `origin/main`.
 2. Confirm the `release` environment and organization secret binding:
-   - The protected `release` environment exists and has the required deployment protection rules.
+   - The protected `release` environment requires reviewer `acgxv`, permits self-review, and has one
+     custom deployment policy with name `v*` and type `tag`.
    - The environment is the deployment protection boundary. It does not store the long-lived release
      secrets.
-   - Each required secret is an `acg-box` organization Actions secret with visibility `selected`
-     and repository access granted to `acg-box/rsnap`:
+   - Each release secret is an `acg-box` organization Actions secret with visibility `all`:
      - `APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64`
      - `APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD`
      - `APPLE_DEVELOPER_ID_APPLICATION_IDENTITY`
@@ -50,20 +51,31 @@ Sparkle and checksum validation, draft-asset validation, and manual first-run/us
      - `APPLE_NOTARY_ISSUER_ID`
      - `APPLE_NOTARY_KEY_P8`
      - `RSNAP_SPARKLE_PRIVATE_ED_KEY`
-   - No repository or environment secret has one of these names. A narrower-scope value would
-     override the organization secret.
+   - No repository or environment secret has one of the organization-secret names.
+   - `SPARKLE_PUBLIC_ED_KEY` is not required because the public key is checked in.
    - The Apple identity is an exact Developer ID Application identity.
    - The notary key is a Team API key. Its issuer ID is mandatory.
-   - The Rsnap Sparkle private key derives the `SUPublicEDKey` in `scripts/build_and_run.sh`.
-     Do not use a generic Sparkle secret, grant this secret to another application repository, or
-     use a private key for another application.
-3. Confirm local gates:
+   - The Rsnap Sparkle private key derives the `SUPublicEDKey` in `scripts/build_and_run.sh`. Its
+     organization-wide visibility does not make it reusable by another application. Use a separate,
+     application-specific secret name and value for each application.
+3. Confirm the personal Infisical source record:
+   - Repository root `.infisical.json` pins domain `http://127.0.0.1:51890`, project
+     `f55a1068-0ae7-4dee-a0c0-62bfe71016fc`, and environment `prod`.
+   - Machine identity `rsnap-release-provisioner` can read the Rsnap project and cannot read a
+     sibling project.
+   - `/release/apple` contains the six Apple values after they are provisioned.
+   - `/release/sparkle` contains `RSNAP_SPARKLE_PRIVATE_ED_KEY`.
+   - The Sparkle value from Infisical and the organization secret both derive the checked-in public
+     key. Never print or export either value during this check.
+   - GitHub-hosted runners use the GitHub organization copy. They do not connect to the loopback
+     Infisical instance.
+4. Confirm local gates:
    - `cargo make checks`
    - `cargo make test-host-reset`
    - `cargo make test-macos-native-host-stage`
    - `cargo make test-release`
    - `actionlint .github/workflows/*.yml`
-4. Confirm dedicated desktop validation:
+5. Confirm dedicated desktop validation:
    - `scripts/smoke/macos.sh`
    - `scripts/perf/macos.sh`
    - If scroll-capture correctness changed, follow the deterministic test, perf, and native-smoke

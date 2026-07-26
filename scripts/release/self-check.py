@@ -1029,6 +1029,7 @@ Path(args[args.index("--appcast") + 1]).write_text("<rss/>", encoding="utf-8")
 
 
 def test_static_contracts() -> None:
+	assert not (ROOT / ".github/workflows/one-time-sparkle-secret-relay.yml").exists()
 	for script in (
 		ROOT / "scripts/build_and_run.sh",
 		RELEASE_DIR / "package-macos.sh",
@@ -1049,6 +1050,7 @@ def test_static_contracts() -> None:
 	language_workflow = (ROOT / ".github/workflows/language.yml").read_text(encoding="utf-8")
 	release_spec = (ROOT / "docs/spec/release-distribution.md").read_text(encoding="utf-8")
 	release_runbook = (ROOT / "docs/runbook/validate-release.md").read_text(encoding="utf-8")
+	infisical_config = json.loads((ROOT / ".infisical.json").read_text(encoding="utf-8"))
 	publisher_script = (RELEASE_DIR / "publish-github-release.sh").read_text(
 		encoding="utf-8"
 	)
@@ -1065,13 +1067,33 @@ def test_static_contracts() -> None:
 	assert "runs-on: macos-26" in release_workflow
 	assert "needs: validate-release" in release_workflow
 	assert "needs: [validate-release, build-macos]" in release_workflow
-	assert "RSNAP_SPARKLE_PRIVATE_ED_KEY" in release_workflow
+	assert (
+		"RSNAP_SPARKLE_PRIVATE_ED_KEY: ${{ secrets.RSNAP_SPARKLE_PRIVATE_ED_KEY }}"
+		in release_workflow
+	)
+	assert "${{ secrets.SPARKLE_PRIVATE_ED_KEY }}" not in release_workflow
 	assert re.search(r"^\s+SPARKLE_PRIVATE_ED_KEY:", release_workflow, re.MULTILINE) is None
 	for release_document in (release_spec, release_runbook):
-		assert "`acg-box` organization" in release_document
-		assert "visibility `selected`" in release_document
+		normalized_release_document = " ".join(release_document.split())
+		assert "`acg-box` organization" in normalized_release_document
+		assert "visibility `all`" in normalized_release_document
+		assert "visibility `selected`" not in normalized_release_document
+		assert "name `v*` and type `tag`" in normalized_release_document
 		assert "configured in that environment" not in release_document
-	assert "Do not grant this secret to another application repository." in release_spec
+	assert "another application must use a separately named private key" in " ".join(
+		release_spec.split()
+	)
+	assert infisical_config == {
+		"workspaceId": "f55a1068-0ae7-4dee-a0c0-62bfe71016fc",
+		"defaultEnvironment": "prod",
+		"gitBranchToEnvironmentMapping": None,
+		"domain": "http://127.0.0.1:51890",
+	}
+	for release_document in (release_spec, release_runbook):
+		normalized_release_document = " ".join(release_document.split())
+		assert "`/release/apple`" in normalized_release_document
+		assert "`/release/sparkle`" in normalized_release_document
+		assert "`rsnap-release-provisioner`" in normalized_release_document
 	assert "--verify-appcast-signature" in publisher_script
 	assert "releases/tags/" not in publisher_script
 	assert 'rm -rf "$WORK_ROOT"' not in sparkle_smoke
@@ -1092,10 +1114,15 @@ def test_static_contracts() -> None:
 		["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
 		cwd=ROOT,
 	).stdout.split("\0")
-	tracked_text = "\n".join(
-		(ROOT / relative_path).read_text(encoding="utf-8", errors="ignore")
+	tracked_files = [
+		ROOT / relative_path
 		for relative_path in tracked_paths
-		if relative_path and (ROOT / relative_path).stat().st_size < 2_000_000
+		if relative_path and (ROOT / relative_path).is_file()
+	]
+	tracked_text = "\n".join(
+		path.read_text(encoding="utf-8", errors="ignore")
+		for path in tracked_files
+		if path.stat().st_size < 2_000_000
 	)
 	assert ("acg" + "xv/rsnap") not in tracked_text
 

@@ -60,10 +60,15 @@ Both the macOS package job and the Ubuntu publication job use the GitHub environ
 operator-owned repository setting. The environment is the deployment protection boundary. It does
 not own the long-lived release secrets.
 
-Store the release credentials as GitHub Actions secrets in the `acg-box` organization. Each secret
-must have visibility `selected` and grant access to `acg-box/rsnap`. Do not use `all` visibility.
-Do not create a repository or environment secret with the same name. A narrower-scope secret would
-override the organization value and make the active credential source ambiguous.
+The environment requires approval from GitHub user `acgxv`, permits self-review for the
+single-operator repository, and has one custom deployment policy with name `v*` and type `tag`. The
+workflow trigger and source validator apply the stricter exact `vX.Y.Z` rule.
+
+Store the release credentials as GitHub Actions secrets in the single-operator `acg-box`
+organization. Each secret must have visibility `all` so the operator's release configuration is
+available to every repository in the organization. Do not create a repository or environment secret
+with the same name. A narrower-scope secret would override the organization value and make the
+active credential source ambiguous.
 
 The macOS package job requires these non-empty organization secrets:
 
@@ -78,13 +83,31 @@ The macOS package job requires these non-empty organization secrets:
 The notary credentials are a Team App Store Connect API key. The issuer ID is mandatory. Missing or
 incomplete signing, notarization, or Sparkle credentials stop the package job.
 
-`RSNAP_SPARKLE_PRIVATE_ED_KEY` is the Rsnap key only. It must derive the checked-in Rsnap
-`SUPublicEDKey`. A generic Sparkle private-key secret or a key for another application is not
-accepted. Do not grant this secret to another application repository.
+`RSNAP_SPARKLE_PRIVATE_ED_KEY` is the Rsnap update trust anchor. Its organization-wide visibility
+does not make it a shared application key. Only Rsnap release code can consume this name. The
+private key must derive the checked-in Rsnap `SUPublicEDKey`. A key for another application is not
+accepted, and another application must use a separately named private key. Do not define a
+same-named repository or environment secret.
 
-Organization secrets are available to eligible workflows in each authorized repository. GitHub
-does not bind them to the `release` environment. Repository access control, protected release
-source validation, and workflow review are therefore part of the credential boundary.
+`SPARKLE_PUBLIC_ED_KEY` is not a required secret. The public key is checked in and shipped in the
+application bundle.
+
+Organization secrets are available to eligible workflows in each repository. GitHub does not bind
+them to the `release` environment. Repository access control, protected release source validation,
+and workflow review are therefore part of the credential boundary.
+
+The personal Infisical instance at `http://127.0.0.1:51890` is the operator-controlled source record
+for release material. Repository root `.infisical.json` pins project
+`f55a1068-0ae7-4dee-a0c0-62bfe71016fc` and environment `prod`. Store the Apple values under
+`/release/apple` and the Rsnap key under `/release/sparkle`. Use machine identity
+`rsnap-release-provisioner` with explicit project, environment, and path arguments. Do not use a
+personal CLI profile as automation authority.
+
+GitHub-hosted runners cannot reach this loopback Infisical instance. The Release workflow therefore
+uses GitHub organization secrets at run time. When a release credential is created or rotated,
+write the same value to the pinned Infisical path and its GitHub organization secret in one change
+window. Verify both consumers before removing the previous value. Never copy values to a company
+Infisical instance or to another application's Sparkle secret.
 
 The package script must remove all Apple and Sparkle secret names from the child-process
 environment before it starts the Rust and Swift build. It must finish the unsigned build and bundle
