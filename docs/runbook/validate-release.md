@@ -16,9 +16,10 @@ artifacts immediately after the tag workflow completes.
 
 Preconditions: `main` is clean and synced. The intended release version is committed in
 `Cargo.toml` and `Cargo.lock`. The repository has a protected GitHub environment named `release`.
-All required signing, Team API notary, and Rsnap Sparkle secrets are configured in that environment.
-The Release workflow uses the standard GitHub-hosted `macos-26` ARM64 runner. A logged-in macOS
-desktop session is available for native-host smoke and manual checks.
+All required signing, Team API notary, and Rsnap Sparkle values are GitHub Actions organization
+secrets in `acg-box`, with `selected` repository access granted to `acg-box/rsnap`. The Release
+workflow uses the standard GitHub-hosted `macos-26` ARM64 runner. A logged-in macOS desktop session
+is available for native-host smoke and manual checks.
 
 Depends on: `docs/spec/release-distribution.md`; `docs/spec/app-identity.md`;
 `docs/spec/settings.md`; `docs/spec/telemetry.md`; `docs/runbook/performance-validation.md`;
@@ -36,18 +37,26 @@ Sparkle and checksum validation, draft-asset validation, and manual first-run/us
    - `Package.swift` and `Package.resolved` contain the same exact Sparkle version.
    - No existing local or remote tag already uses `v<version>`.
    - The future annotated tag commit is present on `origin/main`.
-2. Confirm the `release` environment and its required secrets:
-   - `APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64`
-   - `APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD`
-   - `APPLE_DEVELOPER_ID_APPLICATION_IDENTITY`
-   - `APPLE_NOTARY_KEY_ID`
-   - `APPLE_NOTARY_ISSUER_ID`
-   - `APPLE_NOTARY_KEY_P8`
-   - `RSNAP_SPARKLE_PRIVATE_ED_KEY`
+2. Confirm the `release` environment and organization secret binding:
+   - The protected `release` environment exists and has the required deployment protection rules.
+   - The environment is the deployment protection boundary. It does not store the long-lived release
+     secrets.
+   - Each required secret is an `acg-box` organization Actions secret with visibility `selected`
+     and repository access granted to `acg-box/rsnap`:
+     - `APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64`
+     - `APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD`
+     - `APPLE_DEVELOPER_ID_APPLICATION_IDENTITY`
+     - `APPLE_NOTARY_KEY_ID`
+     - `APPLE_NOTARY_ISSUER_ID`
+     - `APPLE_NOTARY_KEY_P8`
+     - `RSNAP_SPARKLE_PRIVATE_ED_KEY`
+   - No repository or environment secret has one of these names. A narrower-scope value would
+     override the organization secret.
    - The Apple identity is an exact Developer ID Application identity.
    - The notary key is a Team API key. Its issuer ID is mandatory.
    - The Rsnap Sparkle private key derives the `SUPublicEDKey` in `scripts/build_and_run.sh`.
-     Do not use a generic Sparkle secret or a private key for another application.
+     Do not use a generic Sparkle secret, grant this secret to another application repository, or
+     use a private key for another application.
 3. Confirm local gates:
    - `cargo make checks`
    - `cargo make test-host-reset`

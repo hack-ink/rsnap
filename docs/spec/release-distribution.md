@@ -25,7 +25,7 @@ Defines:
 - accepted release source;
 - macOS distribution trust requirements;
 - release artifact names and metadata;
-- GitHub environment and secret contract;
+- GitHub environment and organization secret contract;
 - draft-to-public transition.
 
 ## Release Entry Point
@@ -53,13 +53,19 @@ Defines:
 - GitHub Pages, dynamic CodeQL, required Dependency Review, Dependabot, and normal Language Checks
   keep their independent owners and permissions.
 
-## Release Environment and Secrets
+## Release Environment and Organization Secrets
 
 Both the macOS package job and the Ubuntu publication job use the GitHub environment named
 `release`. The environment must exist before a tag is pushed. Environment protection rules are an
-operator-owned repository setting.
+operator-owned repository setting. The environment is the deployment protection boundary. It does
+not own the long-lived release secrets.
 
-The macOS package job requires these non-empty secrets:
+Store the release credentials as GitHub Actions secrets in the `acg-box` organization. Each secret
+must have visibility `selected` and grant access to `acg-box/rsnap`. Do not use `all` visibility.
+Do not create a repository or environment secret with the same name. A narrower-scope secret would
+override the organization value and make the active credential source ambiguous.
+
+The macOS package job requires these non-empty organization secrets:
 
 - `APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64`
 - `APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD`
@@ -74,7 +80,11 @@ incomplete signing, notarization, or Sparkle credentials stop the package job.
 
 `RSNAP_SPARKLE_PRIVATE_ED_KEY` is the Rsnap key only. It must derive the checked-in Rsnap
 `SUPublicEDKey`. A generic Sparkle private-key secret or a key for another application is not
-accepted.
+accepted. Do not grant this secret to another application repository.
+
+Organization secrets are available to eligible workflows in each authorized repository. GitHub
+does not bind them to the `release` environment. Repository access control, protected release
+source validation, and workflow review are therefore part of the credential boundary.
 
 The package script must remove all Apple and Sparkle secret names from the child-process
 environment before it starts the Rust and Swift build. It must finish the unsigned build and bundle

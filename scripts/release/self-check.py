@@ -1047,6 +1047,8 @@ def test_static_contracts() -> None:
 
 	release_workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
 	language_workflow = (ROOT / ".github/workflows/language.yml").read_text(encoding="utf-8")
+	release_spec = (ROOT / "docs/spec/release-distribution.md").read_text(encoding="utf-8")
+	release_runbook = (ROOT / "docs/runbook/validate-release.md").read_text(encoding="utf-8")
 	publisher_script = (RELEASE_DIR / "publish-github-release.sh").read_text(
 		encoding="utf-8"
 	)
@@ -1065,6 +1067,11 @@ def test_static_contracts() -> None:
 	assert "needs: [validate-release, build-macos]" in release_workflow
 	assert "RSNAP_SPARKLE_PRIVATE_ED_KEY" in release_workflow
 	assert re.search(r"^\s+SPARKLE_PRIVATE_ED_KEY:", release_workflow, re.MULTILINE) is None
+	for release_document in (release_spec, release_runbook):
+		assert "`acg-box` organization" in release_document
+		assert "visibility `selected`" in release_document
+		assert "configured in that environment" not in release_document
+	assert "Do not grant this secret to another application repository." in release_spec
 	assert "--verify-appcast-signature" in publisher_script
 	assert "releases/tags/" not in publisher_script
 	assert 'rm -rf "$WORK_ROOT"' not in sparkle_smoke
