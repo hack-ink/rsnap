@@ -4,7 +4,7 @@ description: "Scroll-Capture Benchmark Runbook documentation for Rsnap."
 type: "Runbook"
 status: active
 authority: normative
-owner: acgxv/rsnap
+owner: acg-box/rsnap
 last_verified: 2026-07-06
 ---
 # Scroll-Capture Benchmark Runbook

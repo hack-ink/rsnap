@@ -26,7 +26,7 @@ APP_ICON_SOURCE="$ROOT_DIR/assets/app-icon/generated/app-icon.icns"
 APP_ICON_NAME="AppIcon.icns"
 STATUS_ICON_SOURCE="$ROOT_DIR/assets/tray-icon/generated/tray-icon-template.png"
 STATUS_ICON_NAME="StatusBarIcon.png"
-SPARKLE_APPCAST_URL="${RSNAP_SPARKLE_APPCAST_URL:-https://github.com/acgxv/rsnap/releases/latest/download/appcast.xml}"
+SPARKLE_APPCAST_URL="${RSNAP_SPARKLE_APPCAST_URL:-https://github.com/acg-box/rsnap/releases/latest/download/appcast.xml}"
 # The public update key is safe to ship in source. The override exists only for
 # local Sparkle smoke tests that generate a disposable key pair and appcast.
 SPARKLE_PUBLIC_ED_KEY="${RSNAP_SPARKLE_PUBLIC_ED_KEY:-$DEFAULT_SPARKLE_PUBLIC_ED_KEY}"
@@ -267,8 +267,8 @@ stage_app_bundle() {
 		chmod +x "$APP_BINARY"
 	fi
 
-	if otool -L "$APP_BINARY" | grep -q 'Sparkle.framework' \
-		&& ! otool -l "$APP_BINARY" | grep -q '@executable_path/../Frameworks'; then
+	if otool -L "$APP_BINARY" | grep 'Sparkle.framework' >/dev/null \
+		&& ! otool -l "$APP_BINARY" | grep '@executable_path/../Frameworks' >/dev/null; then
 		install_name_tool -add_rpath '@executable_path/../Frameworks' "$APP_BINARY"
 		STAGED_APP_DIRTY=1
 	fi
@@ -296,59 +296,52 @@ stage_app_bundle() {
 	stage_sparkle_framework
 
 	local info_plist_contents
-	info_plist_contents="$(cat <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>CFBundleExecutable</key>
-  <string>$EXECUTABLE_NAME</string>
-  <key>CFBundleIdentifier</key>
-  <string>$BUNDLE_ID</string>
-  <key>CFBundleName</key>
-  <string>$APP_NAME</string>
-  <key>CFBundleDisplayName</key>
-  <string>$APP_NAME</string>
-  <key>CFBundlePackageType</key>
-  <string>APPL</string>
-  <key>CFBundleShortVersionString</key>
-  <string>$APP_VERSION</string>
-  <key>CFBundleVersion</key>
-  <string>$APP_VERSION</string>
-  <key>LSMinimumSystemVersion</key>
-  <string>$MIN_SYSTEM_VERSION</string>
-  <key>NSHighResolutionCapable</key>
-  <true/>
-  <key>NSPrincipalClass</key>
-  <string>NSApplication</string>
-  <key>SUFeedURL</key>
-  <string>$SPARKLE_APPCAST_URL</string>
-  <key>SUEnableAutomaticChecks</key>
-  <true/>
-  <key>SUScheduledCheckInterval</key>
-  <integer>86400</integer>
-  <key>SUAutomaticallyUpdate</key>
-  <true/>
-  <key>SUAllowsAutomaticUpdates</key>
-  <true/>
-  <key>SUPublicEDKey</key>
-  <string>$SPARKLE_PUBLIC_ED_KEY</string>
-PLIST
-)"
+	printf -v info_plist_contents '%s\n' \
+		'<?xml version="1.0" encoding="UTF-8"?>' \
+		'<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
+		'<plist version="1.0">' \
+		'<dict>' \
+		'  <key>CFBundleExecutable</key>' \
+		"  <string>$EXECUTABLE_NAME</string>" \
+		'  <key>CFBundleIdentifier</key>' \
+		"  <string>$BUNDLE_ID</string>" \
+		'  <key>CFBundleName</key>' \
+		"  <string>$APP_NAME</string>" \
+		'  <key>CFBundleDisplayName</key>' \
+		"  <string>$APP_NAME</string>" \
+		'  <key>CFBundlePackageType</key>' \
+		'  <string>APPL</string>' \
+		'  <key>CFBundleShortVersionString</key>' \
+		"  <string>$APP_VERSION</string>" \
+		'  <key>CFBundleVersion</key>' \
+		"  <string>$APP_VERSION</string>" \
+		'  <key>LSMinimumSystemVersion</key>' \
+		"  <string>$MIN_SYSTEM_VERSION</string>" \
+		'  <key>NSHighResolutionCapable</key>' \
+		'  <true/>' \
+		'  <key>NSPrincipalClass</key>' \
+		'  <string>NSApplication</string>' \
+		'  <key>SUFeedURL</key>' \
+		"  <string>$SPARKLE_APPCAST_URL</string>" \
+		'  <key>SUEnableAutomaticChecks</key>' \
+		'  <true/>' \
+		'  <key>SUScheduledCheckInterval</key>' \
+		'  <integer>86400</integer>' \
+		'  <key>SUAutomaticallyUpdate</key>' \
+		'  <true/>' \
+		'  <key>SUAllowsAutomaticUpdates</key>' \
+		'  <true/>' \
+		'  <key>SUPublicEDKey</key>' \
+		"  <string>$SPARKLE_PUBLIC_ED_KEY</string>"
 
 	if [[ -f "$APP_RESOURCES/$APP_ICON_NAME" ]]; then
-		info_plist_contents+="$(cat <<PLIST
-  <key>CFBundleIconFile</key>
-  <string>${APP_ICON_NAME%.icns}</string>
-PLIST
-)"
+		info_plist_contents+='  <key>CFBundleIconFile</key>'
+		info_plist_contents+=$'\n'"  <string>${APP_ICON_NAME%.icns}</string>"
+		info_plist_contents+=$'\n'
 	fi
 
-	info_plist_contents+="$(cat <<'PLIST'
-</dict>
-</plist>
-PLIST
-)"
+	info_plist_contents+='</dict>'
+	info_plist_contents+=$'\n</plist>'
 
 	if write_if_changed "$INFO_PLIST" "$info_plist_contents"; then
 		STAGED_APP_DIRTY=1
@@ -357,9 +350,14 @@ PLIST
 
 resolve_signing_identity() {
 	local requested_identity identity_list identity
+	local security_args
 
 	requested_identity="${RSNAP_NATIVE_HOST_SIGN_IDENTITY:-$DEFAULT_SIGN_IDENTITY}"
-	identity_list="$(security find-identity -v -p codesigning 2>/dev/null || true)"
+	security_args=(find-identity -v -p codesigning)
+	if [[ -n "${RSNAP_NATIVE_HOST_SIGN_KEYCHAIN:-}" ]]; then
+		security_args+=("$RSNAP_NATIVE_HOST_SIGN_KEYCHAIN")
+	fi
+	identity_list="$(security "${security_args[@]}" 2>/dev/null || true)"
 	if [[ -n "$requested_identity" ]]; then
 		while IFS= read -r line; do
 			identity="${line#*\"}"
@@ -385,27 +383,23 @@ resolve_signing_identity() {
 
 sign_staged_app_bundle() {
 	local requested_identity
+	local signer_args
 	requested_identity="${RSNAP_NATIVE_HOST_SIGN_IDENTITY:-$DEFAULT_SIGN_IDENTITY}"
 	if [[ "$STAGED_APP_DIRTY" != "1" ]] && codesign --verify --deep --strict "$APP_BUNDLE" >/dev/null 2>&1; then
 		return
 	fi
 	if resolve_signing_identity; then
-		if [[ -f "$BUILD_ROOT/$EXECUTABLE_NAME-entitlement.plist" ]]; then
-			codesign \
-				--force \
-				--deep \
-				--options runtime \
-				--sign "$RESOLVED_SIGN_IDENTITY" \
-				--entitlements "$BUILD_ROOT/$EXECUTABLE_NAME-entitlement.plist" \
-				"$APP_BUNDLE"
-		else
-			codesign \
-				--force \
-				--deep \
-				--options runtime \
-				--sign "$RESOLVED_SIGN_IDENTITY" \
-				"$APP_BUNDLE"
+		signer_args=(
+			--app "$APP_BUNDLE"
+			--identity "$RESOLVED_SIGN_IDENTITY"
+		)
+		if [[ -n "${RSNAP_NATIVE_HOST_SIGN_KEYCHAIN:-}" ]]; then
+			signer_args+=(--keychain "$RSNAP_NATIVE_HOST_SIGN_KEYCHAIN")
 		fi
+		if [[ -f "$BUILD_ROOT/$EXECUTABLE_NAME-entitlement.plist" ]]; then
+			signer_args+=(--entitlements "$BUILD_ROOT/$EXECUTABLE_NAME-entitlement.plist")
+		fi
+		"$ROOT_DIR/scripts/release/sign-macos-app.sh" "${signer_args[@]}"
 		return
 	fi
 
@@ -423,7 +417,7 @@ compute_stage_fingerprint() {
 			swift --version
 		} 2>/dev/null | tr '\n' ' '
 	)"
-	python3 - "$ROOT_DIR" "$RUST_PROFILE" "$SWIFT_CONFIGURATION" "$APP_VERSION" "$swift_toolchain" <<'PY'
+	python3 -c '
 import hashlib
 import os
 import sys
@@ -441,6 +435,7 @@ targets = [
 	"packages/rsnap-capture-core",
 	"packages/rsnap-host-ffi",
 	"scripts/build_and_run.sh",
+	"scripts/release/sign-macos-app.sh",
 ]
 skip_dirs = {".git", ".worktrees", "target", ".build"}
 
@@ -471,7 +466,7 @@ for target in targets:
 			update_file(os.path.join(dirpath, filename))
 
 print(hasher.hexdigest())
-PY
+' "$ROOT_DIR" "$RUST_PROFILE" "$SWIFT_CONFIGURATION" "$APP_VERSION" "$swift_toolchain"
 }
 
 write_stage_fingerprint() {

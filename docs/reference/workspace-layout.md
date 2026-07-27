@@ -4,7 +4,7 @@ description: "Workspace Layout Reference documentation for Rsnap."
 type: "Reference"
 status: active
 authority: normative
-owner: acgxv/rsnap
+owner: acg-box/rsnap
 last_verified: 2026-07-07
 ---
 # Workspace Layout Reference
