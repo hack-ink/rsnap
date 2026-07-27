@@ -50,24 +50,17 @@ assert_contains() {
 app="$(make_fixture "$TEST_ROOT/development")"
 keychain="$TEST_ROOT/test.keychain-db"
 app_entitlements="$TEST_ROOT/app.entitlements"
-downloader_entitlements="$TEST_ROOT/downloader.entitlements"
 touch "$keychain"
 cat >"$app_entitlements" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0"><dict><key>app-test</key><true/></dict></plist>
 PLIST
-cat >"$downloader_entitlements" <<'PLIST'
-<?xml version="1.0" encoding="UTF-8"?>
-<plist version="1.0"><dict><key>downloader-test</key><true/></dict></plist>
-PLIST
-
 : >"$CODESIGN_LOG"
 CODESIGN_BIN="$FAKE_CODESIGN" "$SIGNER" \
 	--app "$app" \
 	--identity "Apple Development: Test" \
 	--keychain "$keychain" \
-	--entitlements "$app_entitlements" \
-	--downloader-entitlements "$downloader_entitlements"
+	--entitlements "$app_entitlements"
 
 if [[ "$(wc -l <"$CODESIGN_LOG" | tr -d ' ')" != "7" ]]; then
 	echo "expected six signing calls and one verification call" >&2
@@ -88,7 +81,7 @@ assert_contains "$autoupdate_line" "Autoupdate"
 assert_contains "$updater_line" "Updater.app"
 assert_contains "$framework_line" "Sparkle.framework"
 assert_contains "$app_line" "Rsnap.app"
-assert_contains "$downloader_line" "--entitlements $downloader_entitlements"
+assert_contains "$downloader_line" "--preserve-metadata=entitlements"
 assert_contains "$app_line" "--entitlements $app_entitlements"
 assert_contains "$verify_line" "--verify --deep --strict"
 
@@ -102,21 +95,16 @@ while IFS= read -r signing_line; do
 	fi
 done < <(sed -n '1,6p' "$CODESIGN_LOG")
 
-preserve_app="$(make_fixture "$TEST_ROOT/preserve")"
+unsupported_app="$(make_fixture "$TEST_ROOT/unsupported")"
 : >"$CODESIGN_LOG"
-CODESIGN_BIN="$FAKE_CODESIGN" "$SIGNER" \
-	--app "$preserve_app" \
-	--identity "Apple Development: Test"
-assert_contains "$(sed -n '2p' "$CODESIGN_LOG")" "--preserve-metadata=entitlements"
-
-distribution_app="$(make_fixture "$TEST_ROOT/distribution")"
-: >"$CODESIGN_LOG"
-CODESIGN_BIN="$FAKE_CODESIGN" "$SIGNER" \
-	--app "$distribution_app" \
-	--identity "Developer ID Application: Test"
-assert_contains "$(sed -n '1p' "$CODESIGN_LOG")" "--timestamp"
-if sed -n '1,6p' "$CODESIGN_LOG" | grep -q -- '--timestamp=none'; then
-	echo "Developer ID signing must request a secure timestamp" >&2
+if CODESIGN_BIN="$FAKE_CODESIGN" "$SIGNER" \
+	--app "$unsupported_app" \
+	--identity "Developer ID Application: Test" >/dev/null 2>&1; then
+	echo "signer accepted an unsupported release identity" >&2
+	exit 1
+fi
+if [[ -s "$CODESIGN_LOG" ]]; then
+	echo "signer called codesign before rejecting an unsupported identity" >&2
 	exit 1
 fi
 

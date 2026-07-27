@@ -10,7 +10,6 @@ env:
   MACOS_RELEASE_ASSET: rsnap-aarch64-apple-darwin.zip
   MACOS_APPCAST_ASSET: appcast.xml
   MACOS_CHECKSUM_ASSET: rsnap-aarch64-apple-darwin.zip.sha256
-  SPARKLE_PUBLIC_ED_KEY: X2EaTv6mCzkYxz75Hh+ldMkKlpzNlHRg5l7Kn9ke8Ow=
 
 on:
   push:
@@ -22,12 +21,11 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  validate-release:
-    name: Validate release source
+  source:
+    name: Check source
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
-      sparkle_version: ${{ steps.source.outputs.sparkle_version }}
       tag_commit: ${{ steps.source.outputs.tag_commit }}
       version: ${{ steps.source.outputs.version }}
     steps:
@@ -40,19 +38,19 @@ jobs:
       - name: Fetch canonical main
         run: git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
 
-      - name: Validate tag, versions, and source commit
+      - name: Check tag and source
         id: source
         run: scripts/release/validate-release-source.py
 
   build-macos:
-    name: Test, sign, and package macOS app
-    needs: validate-release
+    name: Build macOS release
+    needs: source
     runs-on: macos-26
     timeout-minutes: 75
     env:
-      RSNAP_RELEASE_COMMIT: ${{ needs.validate-release.outputs.tag_commit }}
+      RSNAP_RELEASE_COMMIT: ${{ needs.source.outputs.tag_commit }}
       RSNAP_RELEASE_TAG: ${{ github.ref_name }}
-      RSNAP_RELEASE_VERSION: ${{ needs.validate-release.outputs.version }}
+      RSNAP_RELEASE_VERSION: ${{ needs.source.outputs.version }}
     steps:
       - name: Fetch validated source
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -84,7 +82,7 @@ jobs:
       - name: Run release tests
         run: cargo make test-macos-release
 
-      - name: Build, sign, and validate package
+      - name: Build, sign, and package
         env:
           APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -151,9 +149,6 @@ jobs:
           security find-identity -v -p codesigning "$KEYCHAIN_PATH" \
             | grep -F -- "\"$APPLE_SIGNING_IDENTITY\""
 
-          printf '%s\n' "$SPARKLE_PRIVATE_ED_KEY" \
-            | swift scripts/release/verify-sparkle-key.swift "$SPARKLE_PUBLIC_ED_KEY"
-
           RSNAP_NATIVE_HOST_FORCE_REBUILD=1 \
           RSNAP_NATIVE_HOST_SIGN_IDENTITY="$APPLE_SIGNING_IDENTITY" \
           RSNAP_NATIVE_HOST_SIGN_KEYCHAIN="$KEYCHAIN_PATH" \
@@ -168,14 +163,14 @@ jobs:
           test "$(plutil -extract CFBundleShortVersionString raw "$APP_PATH/Contents/Info.plist")" = "$RSNAP_RELEASE_VERSION"
           test "$(plutil -extract SUFeedURL raw "$APP_PATH/Contents/Info.plist")" = \
             "https://github.com/acg-box/rsnap/releases/latest/download/appcast.xml"
+          SPARKLE_PUBLIC_ED_KEY="$(tr -d '\r\n' < scripts/release/sparkle-public-ed-key.txt)"
           test "$(plutil -extract SUPublicEDKey raw "$APP_PATH/Contents/Info.plist")" = \
             "$SPARKLE_PUBLIC_ED_KEY"
-          codesign --verify --deep --strict --verbose=4 "$APP_PATH"
 
           ditto -c -k --sequesterRsrc --keepParent \
             "$APP_PATH" \
             "$MACOS_RELEASE_ASSET"
-          scripts/release/sparkle-appcast.sh \
+          scripts/release/sparkle-appcast.py \
             --archive "$MACOS_RELEASE_ASSET" \
             --appcast "$MACOS_APPCAST_ASSET" \
             --version "$RSNAP_RELEASE_VERSION" \
@@ -183,15 +178,8 @@ jobs:
           ARCHIVE_SHA256="$(shasum -a 256 "$MACOS_RELEASE_ASSET" | awk '{print $1}')"
           printf '%s  %s\n' "$ARCHIVE_SHA256" "$MACOS_RELEASE_ASSET" \
             >"$MACOS_CHECKSUM_ASSET"
-          scripts/release/validate-release-artifacts.py \
-            --archive "$MACOS_RELEASE_ASSET" \
-            --appcast "$MACOS_APPCAST_ASSET" \
-            --checksum "$MACOS_CHECKSUM_ASSET" \
-            --version "$RSNAP_RELEASE_VERSION" \
-            --tag "$RSNAP_RELEASE_TAG" \
-            --repository "$GITHUB_REPOSITORY"
 
-      - name: Upload validated release assets
+      - name: Upload release assets
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: rsnap-aarch64-apple-darwin
@@ -203,8 +191,8 @@ jobs:
           retention-days: 7
 
   publish-release:
-    name: Validate draft and publish release
-    needs: [validate-release, build-macos]
+    name: Publish release
+    needs: [source, build-macos]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment:
@@ -212,23 +200,23 @@ jobs:
     permissions:
       contents: write
     env:
-      RSNAP_RELEASE_COMMIT: ${{ needs.validate-release.outputs.tag_commit }}
+      RSNAP_RELEASE_COMMIT: ${{ needs.source.outputs.tag_commit }}
       RSNAP_RELEASE_TAG: ${{ github.ref_name }}
-      RSNAP_RELEASE_VERSION: ${{ needs.validate-release.outputs.version }}
+      RSNAP_RELEASE_VERSION: ${{ needs.source.outputs.version }}
     steps:
       - name: Fetch validated source
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
-      - name: Download validated release assets
+      - name: Download release assets
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: rsnap-aarch64-apple-darwin
           path: artifacts
 
-      - name: Create, validate, and publish GitHub draft
+      - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           RSNAP_RELEASE_INPUT_DIR: artifacts
-        run: scripts/release/publish-github-release.sh
+        run: scripts/release/publish-github-release.py

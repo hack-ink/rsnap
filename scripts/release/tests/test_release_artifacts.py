@@ -3,7 +3,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import importlib.util
-import json
 import pathlib
 import plistlib
 import shutil
@@ -21,15 +20,10 @@ assert SPEC is not None and SPEC.loader is not None
 VALIDATOR = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = VALIDATOR
 SPEC.loader.exec_module(VALIDATOR)
-DRAFT_TOKEN = "untagged-01234567-89ab-cdef-0123-456789abcdef"
-
-
 class ReleaseFixture:
     def __init__(
         self,
         root: pathlib.Path,
-        *,
-        production_public_key: bool = False,
     ) -> None:
         self.root = root
         self.version = "1.2.3"
@@ -39,38 +33,34 @@ class ReleaseFixture:
         self.checksum = root / VALIDATOR.CHECKSUM_NAME
         self.private_key = root / "sparkle-private.pem"
 
-        if production_public_key:
-            self.public_key_b64 = VALIDATOR.SPARKLE_PUBLIC_ED_KEY
-            self.private_key = None
-        else:
-            subprocess.run(
-                [
-                    "openssl",
-                    "genpkey",
-                    "-algorithm",
-                    "ED25519",
-                    "-out",
-                    str(self.private_key),
-                ],
-                check=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            public_der = subprocess.run(
-                [
-                    "openssl",
-                    "pkey",
-                    "-in",
-                    str(self.private_key),
-                    "-pubout",
-                    "-outform",
-                    "DER",
-                ],
-                check=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-            ).stdout
-            self.public_key_b64 = base64.b64encode(public_der[-32:]).decode()
+        subprocess.run(
+            [
+                "openssl",
+                "genpkey",
+                "-algorithm",
+                "ED25519",
+                "-out",
+                str(self.private_key),
+            ],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        public_der = subprocess.run(
+            [
+                "openssl",
+                "pkey",
+                "-in",
+                str(self.private_key),
+                "-pubout",
+                "-outform",
+                "DER",
+            ],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        ).stdout
+        self.public_key_b64 = base64.b64encode(public_der[-32:]).decode()
         self.write_archive()
         self.write_appcast()
         self.write_checksum()
@@ -107,8 +97,6 @@ class ReleaseFixture:
                 archive.writestr(extra_entry, b"unexpected")
 
     def signature(self) -> bytes:
-        if self.private_key is None:
-            return bytes(64)
         signature_path = self.root / "signature.bin"
         subprocess.run(
             [
@@ -189,55 +177,10 @@ class ReleaseFixture:
             "version": self.version,
             "tag": self.tag,
             "repository": VALIDATOR.CANONICAL_REPOSITORY,
-            "verify_signature": True,
             "public_key_b64": self.public_key_b64,
         }
         arguments.update(overrides)
         VALIDATOR.validate_artifacts(**arguments)
-
-    def release_metadata(self, *, draft: bool = True) -> dict[str, object]:
-        download_tag = DRAFT_TOKEN if draft else self.tag
-        return {
-            "id": 42,
-            "tag_name": self.tag,
-            "target_commitish": "a" * 40,
-            "draft": draft,
-            "prerelease": False,
-            "url": (
-                f"https://api.github.com/repos/{VALIDATOR.CANONICAL_REPOSITORY}/"
-                "releases/42"
-            ),
-            "html_url": (
-                f"https://github.com/{VALIDATOR.CANONICAL_REPOSITORY}/"
-                f"releases/tag/{download_tag}"
-            ),
-        }
-
-    def asset_metadata(self, *, draft: bool = True) -> list[dict[str, object]]:
-        download_tag = DRAFT_TOKEN if draft else self.tag
-        result = []
-        for asset_id, path in enumerate(
-            (self.archive, self.appcast, self.checksum),
-            start=101,
-        ):
-            result.append(
-                {
-                    "id": asset_id,
-                    "name": path.name,
-                    "size": path.stat().st_size,
-                    "state": "uploaded",
-                    "url": (
-                        f"https://api.github.com/repos/"
-                        f"{VALIDATOR.CANONICAL_REPOSITORY}/releases/assets/{asset_id}"
-                    ),
-                    "browser_download_url": (
-                        f"https://github.com/{VALIDATOR.CANONICAL_REPOSITORY}/"
-                        f"releases/download/{download_tag}/{path.name}"
-                    ),
-                }
-            )
-        return result
-
 
 @unittest.skipUnless(shutil.which("openssl"), "openssl is required")
 class ReleaseArtifactTests(unittest.TestCase):
@@ -290,98 +233,6 @@ class ReleaseArtifactTests(unittest.TestCase):
         fixture.write_appcast(channel="beta")
         with self.assertRaisesRegex(VALIDATOR.ValidationError, "stable channel"):
             fixture.validate()
-
-    def test_validates_optional_github_metadata(self) -> None:
-        fixture = ReleaseFixture(self.root)
-        release_json = self.root / "release.json"
-        assets_json = self.root / "assets.json"
-        release_json.write_text(json.dumps(fixture.release_metadata()), encoding="utf-8")
-        assets_json.write_text(json.dumps(fixture.asset_metadata()), encoding="utf-8")
-        fixture.validate(
-            release_json=release_json,
-            assets_json=assets_json,
-            release_state="draft",
-        )
-
-        metadata = fixture.asset_metadata()
-        metadata.append(metadata[0])
-        assets_json.write_text(json.dumps(metadata), encoding="utf-8")
-        with self.assertRaisesRegex(
-            VALIDATOR.ValidationError,
-            "exactly three assets",
-        ):
-            fixture.validate(
-                release_json=release_json,
-                assets_json=assets_json,
-                release_state="draft",
-            )
-
-    def test_validates_published_github_urls(self) -> None:
-        fixture = ReleaseFixture(self.root)
-        release_json = self.root / "release.json"
-        assets_json = self.root / "assets.json"
-        release_json.write_text(
-            json.dumps(fixture.release_metadata(draft=False)),
-            encoding="utf-8",
-        )
-        assets_json.write_text(
-            json.dumps(fixture.asset_metadata(draft=False)),
-            encoding="utf-8",
-        )
-        fixture.validate(
-            release_json=release_json,
-            assets_json=assets_json,
-            release_state="published",
-        )
-
-    def test_rejects_draft_asset_from_another_untagged_release(self) -> None:
-        fixture = ReleaseFixture(self.root)
-        release_json = self.root / "release.json"
-        assets_json = self.root / "assets.json"
-        release_json.write_text(json.dumps(fixture.release_metadata()), encoding="utf-8")
-        assets = fixture.asset_metadata()
-        assets[0]["browser_download_url"] = (
-            f"https://github.com/{VALIDATOR.CANONICAL_REPOSITORY}/releases/"
-            f"download/untagged-fedcba98-7654-3210-fedc-ba9876543210/"
-            f"{VALIDATOR.ARCHIVE_NAME}"
-        )
-        assets_json.write_text(json.dumps(assets), encoding="utf-8")
-        with self.assertRaisesRegex(
-            VALIDATOR.ValidationError,
-            "download URL is not canonical",
-        ):
-            fixture.validate(
-                release_json=release_json,
-                assets_json=assets_json,
-                release_state="draft",
-            )
-
-    def test_cli_supports_required_contract(self) -> None:
-        fixture = ReleaseFixture(self.root, production_public_key=True)
-        result = subprocess.run(
-            [
-                sys.executable,
-                str(VALIDATOR_PATH),
-                "--archive",
-                str(fixture.archive),
-                "--appcast",
-                str(fixture.appcast),
-                "--checksum",
-                str(fixture.checksum),
-                "--version",
-                fixture.version,
-                "--tag",
-                fixture.tag,
-                "--repository",
-                VALIDATOR.CANONICAL_REPOSITORY,
-            ],
-            check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-
 
 if __name__ == "__main__":
     unittest.main()

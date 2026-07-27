@@ -16,7 +16,7 @@ Status: normative.
 Read this when: You change the release workflow, macOS signing, Sparkle metadata, release assets,
 or release credentials.
 
-Not this document: Use `docs/runbook/validate-release.md` for the operator sequence. Use
+Not this document: Use `docs/runbook/release.md` for the operator sequence. Use
 `docs/spec/app-identity.md` for product and bundle names.
 
 Defines:
@@ -42,7 +42,6 @@ Defines:
 - The tag commit, workflow event commit, and checked-out commit are the same commit.
 - The tag commit is reachable from `origin/main`.
 - The tag version matches `Cargo.toml` and the Rsnap workspace packages in `Cargo.lock`.
-- The declared and resolved Sparkle dependency versions match.
 - The built app `CFBundleVersion` and `CFBundleShortVersionString` match the tag version.
 
 ## Permission contract
@@ -91,7 +90,7 @@ file name.
   boundary. The environment stores no release secrets.
 - The publisher validates local assets before it changes GitHub Release state.
 - The publisher creates or reuses a draft and uploads only the three required assets.
-- The publisher validates remote metadata and downloaded remote bytes before publication.
+- The publisher validates the exact remote asset set and downloaded bytes before publication.
 - The last state-changing operation makes the draft public.
 - A validation or upload failure leaves the release as a draft.
 - The workflow does not publish crates.io packages or non-macOS desktop archives.

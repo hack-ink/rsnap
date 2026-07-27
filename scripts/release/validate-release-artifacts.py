@@ -7,7 +7,6 @@ import argparse
 import base64
 import binascii
 import hashlib
-import json
 import pathlib
 import plistlib
 import re
@@ -16,7 +15,6 @@ import subprocess
 import sys
 import tempfile
 import zipfile
-from typing import Any
 from xml.etree import ElementTree
 
 
@@ -29,7 +27,9 @@ CANONICAL_REPOSITORY = "acg-box/rsnap"
 SPARKLE_FEED_URL = (
     "https://github.com/acg-box/rsnap/releases/latest/download/appcast.xml"
 )
-SPARKLE_PUBLIC_ED_KEY = "X2EaTv6mCzkYxz75Hh+ldMkKlpzNlHRg5l7Kn9ke8Ow="
+SPARKLE_PUBLIC_ED_KEY = (
+    pathlib.Path(__file__).with_name("sparkle-public-ed-key.txt").read_text().strip()
+)
 SPARKLE_NAMESPACE = "http://www.andymatuschak.org/xml-namespaces/sparkle"
 SEMVER_PATTERN = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
 MAX_METADATA_BYTES = 4 * 1024 * 1024
@@ -43,19 +43,6 @@ def require(condition: bool, message: str) -> None:
     """Raise a release validation error when a condition is false."""
     if not condition:
         raise ValidationError(message)
-
-
-def load_json(path: pathlib.Path) -> Any:
-    """Load bounded JSON metadata."""
-    require(path.is_file(), f"metadata file does not exist: {path}")
-    require(
-        path.stat().st_size <= MAX_METADATA_BYTES,
-        f"metadata file is too large: {path}",
-    )
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as error:
-        raise ValidationError(f"cannot read JSON metadata {path}: {error}") from error
 
 
 def validate_identity(
@@ -242,7 +229,6 @@ def validate_appcast(
     archive: pathlib.Path,
     version: str,
     tag: str,
-    verify_signature: bool,
     public_key_b64: str,
 ) -> None:
     """Validate the stable Sparkle item and its archive enclosure."""
@@ -317,8 +303,7 @@ def validate_appcast(
     signature_text = enclosure.get(f"{{{SPARKLE_NAMESPACE}}}edSignature")
     require(signature_text is not None, "appcast enclosure has no Ed25519 signature")
     signature = decode_signature(signature_text)
-    if verify_signature:
-        verify_ed25519_signature(archive, signature, public_key_b64)
+    verify_ed25519_signature(archive, signature, public_key_b64)
 
 
 def validate_checksum(checksum: pathlib.Path, archive: pathlib.Path) -> None:
@@ -335,116 +320,6 @@ def validate_checksum(checksum: pathlib.Path, archive: pathlib.Path) -> None:
     )
 
 
-def validate_release_metadata(
-    metadata: Any,
-    tag: str,
-    repository: str,
-    release_state: str | None,
-) -> tuple[int, str]:
-    """Validate GitHub release metadata and return its ID and download tag."""
-    require(isinstance(metadata, dict), "GitHub release metadata must be an object")
-    release_id = metadata.get("id")
-    require(
-        isinstance(release_id, int) and release_id > 0,
-        "GitHub release ID must be a positive integer",
-    )
-    require(metadata.get("tag_name") == tag, "GitHub release tag does not match")
-    require(metadata.get("prerelease") is False, "GitHub release must not be a prerelease")
-
-    expected_api_url = f"https://api.github.com/repos/{repository}/releases/{release_id}"
-    require(
-        metadata.get("url") == expected_api_url,
-        "GitHub release API URL is not canonical",
-    )
-
-    download_tag = tag
-    if release_state is not None:
-        expected_draft = release_state == "draft"
-        require(
-            metadata.get("draft") is expected_draft,
-            f"GitHub release must be {release_state}",
-        )
-    if release_state == "draft":
-        draft_url_prefix = f"https://github.com/{repository}/releases/tag/"
-        html_url = metadata.get("html_url")
-        require(
-            isinstance(html_url, str) and html_url.startswith(draft_url_prefix),
-            "GitHub draft release URL is not canonical",
-        )
-        download_tag = html_url.removeprefix(draft_url_prefix)
-        require(
-            re.fullmatch(r"untagged-[A-Za-z0-9][A-Za-z0-9._-]*", download_tag)
-            is not None,
-            "GitHub draft release URL has an invalid untagged token",
-        )
-    else:
-        expected_html_url = f"https://github.com/{repository}/releases/tag/{tag}"
-        require(
-            metadata.get("html_url") == expected_html_url,
-            "GitHub release URL is not canonical",
-        )
-    return release_id, download_tag
-
-
-def validate_asset_metadata(
-    metadata: Any,
-    release_id: int,
-    download_tag: str,
-    archive: pathlib.Path,
-    appcast: pathlib.Path,
-    checksum: pathlib.Path,
-    repository: str,
-) -> None:
-    """Validate the exact GitHub release asset metadata set."""
-    require(isinstance(metadata, list), "GitHub asset metadata must be an array")
-    local_paths = {
-        ARCHIVE_NAME: archive,
-        APPCAST_NAME: appcast,
-        CHECKSUM_NAME: checksum,
-    }
-    require(
-        len(metadata) == len(local_paths),
-        "GitHub release must contain exactly three assets",
-    )
-
-    seen_names: set[str] = set()
-    for asset in metadata:
-        require(isinstance(asset, dict), "GitHub asset metadata entry must be an object")
-        asset_id = asset.get("id")
-        name = asset.get("name")
-        require(
-            isinstance(asset_id, int) and asset_id > 0,
-            "GitHub asset ID must be a positive integer",
-        )
-        require(isinstance(name, str), "GitHub asset name must be a string")
-        require(name not in seen_names, f"GitHub release has duplicate asset: {name}")
-        seen_names.add(name)
-        require(name in local_paths, f"GitHub release has unexpected asset: {name}")
-        require(
-            asset.get("size") == local_paths[name].stat().st_size,
-            f"GitHub asset size does not match local file: {name}",
-        )
-        expected_api_url = (
-            f"https://api.github.com/repos/{repository}/releases/assets/{asset_id}"
-        )
-        expected_download_url = (
-            f"https://github.com/{repository}/releases/download/{download_tag}/{name}"
-        )
-        require(
-            asset.get("url") == expected_api_url,
-            f"GitHub asset API URL is not canonical: {name}",
-        )
-        require(
-            asset.get("browser_download_url") == expected_download_url,
-            f"GitHub asset download URL is not canonical: {name}",
-        )
-        require(
-            asset.get("state") == "uploaded",
-            f"GitHub asset is not fully uploaded: {name}",
-        )
-    require(seen_names == set(local_paths), "GitHub release asset set is incomplete")
-
-
 def validate_artifacts(
     *,
     archive: pathlib.Path,
@@ -453,13 +328,9 @@ def validate_artifacts(
     version: str,
     tag: str,
     repository: str,
-    verify_signature: bool = False,
     public_key_b64: str = SPARKLE_PUBLIC_ED_KEY,
-    release_json: pathlib.Path | None = None,
-    assets_json: pathlib.Path | None = None,
-    release_state: str | None = None,
 ) -> None:
-    """Validate local artifacts and optional GitHub metadata."""
+    """Validate the complete local release artifact set."""
     validate_identity(archive, appcast, checksum, version, tag, repository)
     validate_archive(archive, version, public_key_b64)
     validate_appcast(
@@ -467,32 +338,9 @@ def validate_artifacts(
         archive,
         version,
         tag,
-        verify_signature,
         public_key_b64,
     )
     validate_checksum(checksum, archive)
-
-    if assets_json is not None:
-        require(release_json is not None, "--assets-json requires --release-json")
-    if release_state is not None:
-        require(release_json is not None, "release metadata options require --release-json")
-    if release_json is not None:
-        release_id, download_tag = validate_release_metadata(
-            load_json(release_json),
-            tag,
-            repository,
-            release_state,
-        )
-        if assets_json is not None:
-            validate_asset_metadata(
-                load_json(assets_json),
-                release_id,
-                download_tag,
-                archive,
-                appcast,
-                checksum,
-                repository,
-            )
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -504,14 +352,6 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--version", required=True)
     parser.add_argument("--tag", required=True)
     parser.add_argument("--repository", required=True)
-    parser.add_argument(
-        "--verify-appcast-signature",
-        action="store_true",
-        help="verify the appcast Ed25519 signature with OpenSSL",
-    )
-    parser.add_argument("--release-json", type=pathlib.Path)
-    parser.add_argument("--assets-json", type=pathlib.Path)
-    parser.add_argument("--release-state", choices=("draft", "published"))
     return parser.parse_args(argv)
 
 
@@ -526,10 +366,6 @@ def main(argv: list[str] | None = None) -> int:
             version=args.version,
             tag=args.tag,
             repository=args.repository,
-            verify_signature=args.verify_appcast_signature,
-            release_json=args.release_json,
-            assets_json=args.assets_json,
-            release_state=args.release_state,
         )
     except ValidationError as error:
         print(f"error: {error}", file=sys.stderr)
