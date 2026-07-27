@@ -99,7 +99,7 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 size="$(wc -c <"$file" | tr -d ' ')"
-printf 'sparkle:edSignature="fake-signature" length="%s"\n' "$size"
+printf 'sparkle:edSignature="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==" length="%s"\n' "$size"
 SH
 	chmod +x "$fake_sign_update"
 	SPARKLE_PRIVATE_ED_KEY="fake-private-key" \
@@ -118,7 +118,7 @@ import xml.etree.ElementTree as ET
 path = sys.argv[1]
 text = open(path, encoding="utf-8").read()
 assert "http://127.0.0.1:9/rsnap-aarch64-apple-darwin.zip" in text
-assert 'sparkle:edSignature="fake-signature"' in text
+assert 'sparkle:edSignature="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="' in text
 assert 'length="9"' in text
 assert ET.parse(path).getroot().tag == "rss"
 print("sparkle update local self-check ok")

@@ -5,11 +5,11 @@
 macOS-first screenshot app built with a native host and Rust core.
 
 [![License](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Language Checks](https://github.com/acgxv/rsnap/actions/workflows/language.yml/badge.svg?branch=main)](https://github.com/acgxv/rsnap/actions/workflows/language.yml)
-[![Release](https://github.com/acgxv/rsnap/actions/workflows/release.yml/badge.svg)](https://github.com/acgxv/rsnap/actions/workflows/release.yml)
-[![GitHub tag (latest by date)](https://img.shields.io/github/v/tag/acgxv/rsnap)](https://github.com/acgxv/rsnap/tags)
-[![GitHub last commit](https://img.shields.io/github/last-commit/acgxv/rsnap?color=red&style=plastic)](https://github.com/acgxv/rsnap)
-[![GitHub code lines](https://tokei.rs/b1/github/acgxv/rsnap)](https://github.com/acgxv/rsnap)
+[![Language Checks](https://github.com/acg-box/rsnap/actions/workflows/language.yml/badge.svg?branch=main)](https://github.com/acg-box/rsnap/actions/workflows/language.yml)
+[![Release](https://github.com/acg-box/rsnap/actions/workflows/release.yml/badge.svg)](https://github.com/acg-box/rsnap/actions/workflows/release.yml)
+[![GitHub tag (latest by date)](https://img.shields.io/github/v/tag/acg-box/rsnap)](https://github.com/acg-box/rsnap/tags)
+[![GitHub last commit](https://img.shields.io/github/last-commit/acg-box/rsnap?color=red&style=plastic)](https://github.com/acg-box/rsnap)
+[![GitHub code lines](https://tokei.rs/b1/github/acg-box/rsnap)](https://github.com/acg-box/rsnap)
 
 https://github.com/user-attachments/assets/ff2fe84f-f551-40e8-919c-66ae8a61f8e7
 
@@ -88,7 +88,7 @@ Prototype / in active development.
 
 Download the latest macOS zip:
 
-<https://github.com/acgxv/rsnap/releases/latest/download/rsnap-aarch64-apple-darwin.zip>
+<https://github.com/acg-box/rsnap/releases/latest/download/rsnap-aarch64-apple-darwin.zip>
 
 Unzip it and move `Rsnap.app` to `/Applications`.
 
@@ -99,7 +99,7 @@ with the Sparkle appcast configured.
 #### Build from Source
 
 ```sh
-git clone https://github.com/acgxv/rsnap
+git clone https://github.com/acg-box/rsnap
 cd rsnap
 
 cargo build --workspace
@@ -108,11 +108,14 @@ cargo run -p rsnap
 
 #### macOS Gatekeeper approval for signed but unnotarized builds
 
-Current preview release builds are signed, but may not be notarized by Apple. If macOS blocks
-`Rsnap.app` after you unzip a downloaded build, use the quarantine override only for a bundle you
-built yourself or downloaded from this repository's GitHub Releases page.
+Current preview release builds are signed, but are not notarized by Apple. If macOS blocks
+`Rsnap.app` after you unzip a downloaded build, first try to open it. Then open `System Settings`
+-> `Privacy & Security`, find the message about Rsnap, and select `Open Anyway`. Authenticate and
+confirm `Open` when macOS asks. Do this only for a bundle that you built or downloaded from this
+repository's GitHub Releases page.
 
-Move the app to `/Applications`, then run:
+If `Open Anyway` is not available, move the trusted app to `/Applications`, then use this terminal
+fallback:
 
 ```sh
 xattr -rd com.apple.quarantine /Applications/Rsnap.app

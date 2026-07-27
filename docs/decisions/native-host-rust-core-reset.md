@@ -4,7 +4,7 @@ description: "Native Host / Rust Core Reset documentation for Rsnap."
 type: "Decision"
 status: active
 authority: normative
-owner: acgxv/rsnap
+owner: acg-box/rsnap
 last_verified: 2026-07-06
 ---
 # Native Host / Rust Core Reset

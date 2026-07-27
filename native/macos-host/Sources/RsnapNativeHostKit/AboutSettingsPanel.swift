@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 private enum NativeHostAboutLinks {
-	static let source = "https://github.com/acgxv/rsnap"
+	static let source = "https://github.com/acg-box/rsnap"
 	static let creator = "https://x.com/hackink"
 }
 

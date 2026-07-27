@@ -12,9 +12,9 @@ Required environment:
 
 Optional environment:
   SPARKLE_SIGN_UPDATE     explicit path to Sparkle's sign_update tool
-  SPARKLE_ARCHIVE_URL     explicit appcast download URL for the release archive
+  SPARKLE_ARCHIVE_URL     canonical acg-box release URL, or a loopback smoke URL
   SPARKLE_RELEASE_NOTES_URL
-                          explicit appcast release notes URL
+                          canonical acg-box release URL, or a loopback smoke URL
 USAGE
 }
 
@@ -61,8 +61,29 @@ for required_value in archive appcast version tag; do
 	fi
 done
 
+semver_pattern='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+if [[ ! "$version" =~ $semver_pattern ]]; then
+	echo "error: version must be a stable SemVer value such as 1.2.3" >&2
+	exit 1
+fi
+if [[ "$tag" != "v$version" ]]; then
+	echo "error: release tag $tag does not match version $version" >&2
+	exit 1
+fi
+
 if [[ ! -f "$archive" ]]; then
 	echo "error: release archive not found: $archive" >&2
+	exit 1
+fi
+if [[ ! -s "$archive" ]]; then
+	echo "error: release archive is empty: $archive" >&2
+	exit 1
+fi
+
+archive_name="$(basename "$archive")"
+archive_name_pattern='^[A-Za-z0-9][A-Za-z0-9._-]*$'
+if [[ ! "$archive_name" =~ $archive_name_pattern ]]; then
+	echo "error: release archive name contains unsupported URL characters: $archive_name" >&2
 	exit 1
 fi
 
@@ -89,68 +110,17 @@ if [[ -z "$sign_update" || ! -x "$sign_update" ]]; then
 	exit 1
 fi
 
-signature_fragment="$(
+signature_output="$(
 	printf '%s\n' "$SPARKLE_PRIVATE_ED_KEY" \
 		| "$sign_update" --ed-key-file - "$archive"
 )"
-if [[ "$signature_fragment" != *"sparkle:edSignature="* || "$signature_fragment" != *"length="* ]]; then
-	echo "error: unexpected Sparkle signature fragment: $signature_fragment" >&2
-	exit 1
-fi
 
 VERSION="$version" \
-	TAG="$tag" \
-	ARCHIVE="$(basename "$archive")" \
-	APPCAST="$appcast" \
-	SPARKLE_ARCHIVE_URL="${SPARKLE_ARCHIVE_URL:-}" \
-	SPARKLE_RELEASE_NOTES_URL="${SPARKLE_RELEASE_NOTES_URL:-}" \
-	SPARKLE_SIGNATURE_FRAGMENT="$signature_fragment" \
-	python3 - <<'PY'
-import email.utils
-import os
-from pathlib import Path
-from textwrap import dedent
-from xml.sax.saxutils import escape
-
-version = os.environ["VERSION"]
-tag = os.environ["TAG"]
-archive = os.environ["ARCHIVE"]
-appcast = os.environ["APPCAST"]
-signature_fragment = os.environ["SPARKLE_SIGNATURE_FRAGMENT"].strip()
-archive_url = os.environ["SPARKLE_ARCHIVE_URL"].strip()
-release_notes_url = os.environ["SPARKLE_RELEASE_NOTES_URL"].strip()
-
-download_url = archive_url or f"https://github.com/acgxv/rsnap/releases/download/{tag}/{archive}"
-release_url = release_notes_url or f"https://github.com/acgxv/rsnap/releases/tag/{tag}"
-pub_date = email.utils.formatdate(usegmt=True)
-
-xml = dedent(
-	f"""\
-	<?xml version="1.0" encoding="UTF-8"?>
-	<rss version="2.0"
-	  xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
-	  <channel>
-	    <title>Rsnap Updates</title>
-	    <link>https://github.com/acgxv/rsnap/releases</link>
-	    <description>Rsnap macOS app updates.</description>
-	    <language>en</language>
-	    <item>
-	      <title>Version {escape(version)}</title>
-	      <link>{escape(release_url)}</link>
-	      <sparkle:version>{escape(version)}</sparkle:version>
-	      <sparkle:shortVersionString>{escape(version)}</sparkle:shortVersionString>
-	      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-	      <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-	      <sparkle:releaseNotesLink>{escape(release_url)}</sparkle:releaseNotesLink>
-	      <pubDate>{escape(pub_date)}</pubDate>
-	      <enclosure
-	        url="{escape(download_url)}"
-	        {signature_fragment}
-	        type="application/octet-stream" />
-	    </item>
-	  </channel>
-	</rss>
-	"""
-)
-Path(appcast).write_text(xml, encoding="utf-8")
-PY
+TAG="$tag" \
+ARCHIVE_PATH="$archive" \
+ARCHIVE_NAME="$archive_name" \
+APPCAST="$appcast" \
+SPARKLE_ARCHIVE_URL="${SPARKLE_ARCHIVE_URL:-}" \
+SPARKLE_RELEASE_NOTES_URL="${SPARKLE_RELEASE_NOTES_URL:-}" \
+SPARKLE_SIGNATURE_OUTPUT="$signature_output" \
+python3 "$repo_root/scripts/release/write-sparkle-appcast.py"

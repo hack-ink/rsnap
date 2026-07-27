@@ -150,6 +150,8 @@ args = [
 	"--recursive",
 	"--parallel",
 	"native/macos-host/Sources",
+	"scripts/release/tests/generate-sparkle-test-keys.swift",
+	"scripts/release/verify-sparkle-key.swift",
 	"scripts/smoke/lib/live-hud-mouse-path.swift",
 	"scripts/smoke/lib/mask-probe-capture.swift",
 	"scripts/smoke/lib/pasteboard-image-info.swift",
@@ -169,6 +171,8 @@ args = [
 	"--strict",
 	"--parallel",
 	"native/macos-host/Sources",
+	"scripts/release/tests/generate-sparkle-test-keys.swift",
+	"scripts/release/verify-sparkle-key.swift",
 	"scripts/smoke/lib/live-hud-mouse-path.swift",
 	"scripts/smoke/lib/mask-probe-capture.swift",
 	"scripts/smoke/lib/pasteboard-image-info.swift",
@@ -306,14 +310,28 @@ args = [
 # | test-host-ffi-header         | command   |     |
 # | test-macos-native-host       | command   |     |
 # | test-macos-native-host-stage | command   |     |
+# | test-macos-release           | script    |     |
+# | test-release                 | script    |     |
 
 [tasks.test]
 clear = true
 workspace = false
 dependencies = [
+	"test-release",
 	"test-rust",
 	"test-swift",
 ]
+
+[tasks.test-release]
+workspace = false
+script = '''
+python3 -m unittest discover \
+  -s scripts/release/tests \
+  -p 'test_*.py'
+for test_script in scripts/release/tests/test-*.sh; do
+  "$test_script"
+done
+'''
 
 [tasks.test-rust]
 workspace = false
@@ -391,8 +409,9 @@ test -x "$APP_PATH/Contents/MacOS/RsnapNativeHost"
 test -f "$APP_PATH/Contents/Info.plist"
 test -f "$APP_PATH/Contents/Resources/AppIcon.icns"
 test -d "$APP_PATH/Contents/Frameworks/Sparkle.framework"
-otool -L "$APP_PATH/Contents/MacOS/RsnapNativeHost" | grep -q '@rpath/Sparkle.framework'
-otool -l "$APP_PATH/Contents/MacOS/RsnapNativeHost" | grep -q '@executable_path/../Frameworks'
+otool -L "$APP_PATH/Contents/MacOS/RsnapNativeHost" | grep '@rpath/Sparkle.framework' >/dev/null
+otool -l "$APP_PATH/Contents/MacOS/RsnapNativeHost" \
+  | grep '@executable_path/../Frameworks' >/dev/null
 if otool -l "$APP_PATH/Contents/MacOS/RsnapNativeHost" \
   | awk '$1 == "cmd" && $2 == "LC_RPATH" { in_rpath = 1; next } in_rpath && $1 == "path" { sub(/^[[:space:]]*path /, ""); sub(/[[:space:]]+\(offset [0-9]+\)$/, ""); print; in_rpath = 0 }' \
   | grep -E '^(/Applications/.*\.app/Contents/Developer/Toolchains/.*/usr/lib/swift[^/]*/macosx|/Library/Developer/CommandLineTools/usr/lib/swift[^/]*/macosx|/Users/.*/Applications/.*\.app/Contents/Developer/Toolchains/.*/usr/lib/swift[^/]*/macosx)$'; then
@@ -403,7 +422,7 @@ plutil -extract CFBundleName raw "$APP_PATH/Contents/Info.plist" | grep -qx 'Rsn
 plutil -extract CFBundleDisplayName raw "$APP_PATH/Contents/Info.plist" | grep -qx 'Rsnap'
 plutil -extract CFBundleIdentifier raw "$APP_PATH/Contents/Info.plist" | grep -qx 'ink.hack.rsnap'
 plutil -extract SUFeedURL raw "$APP_PATH/Contents/Info.plist" \
-  | grep -qx 'https://github.com/acgxv/rsnap/releases/latest/download/appcast.xml'
+  | grep -qx 'https://github.com/acg-box/rsnap/releases/latest/download/appcast.xml'
 plutil -extract SUPublicEDKey raw "$APP_PATH/Contents/Info.plist" \
   | grep -qx 'X2EaTv6mCzkYxz75Hh+ldMkKlpzNlHRg5l7Kn9ke8Ow='
 plutil -extract SUEnableAutomaticChecks raw "$APP_PATH/Contents/Info.plist" | grep -qx 'true'
@@ -413,6 +432,29 @@ if plutil -extract LSUIElement raw "$APP_PATH/Contents/Info.plist" >/dev/null 2>
   echo "LSUIElement must stay unset so Settings is a normal foreground window" >&2
   exit 1
 fi
+'''
+
+[tasks.test-macos-release]
+workspace = false
+dependencies = [
+	"test-release",
+]
+script = '''
+cargo test --workspace --all-targets --all-features --profile final-release
+cargo build -p rsnap-host-ffi --profile final-release
+swift package --package-path native/macos-host clean
+RSNAP_HOST_FFI_LIB_DIR="$PWD/target/final-release" \
+swift run \
+  --package-path native/macos-host \
+  --disable-automatic-resolution \
+  --configuration release \
+  RsnapHostBridgeProbe
+RSNAP_HOST_FFI_LIB_DIR="$PWD/target/final-release" \
+swift run \
+  --package-path native/macos-host \
+  --disable-automatic-resolution \
+  --configuration release \
+  RsnapNativeHostKitProbe
 '''
 
 # Build

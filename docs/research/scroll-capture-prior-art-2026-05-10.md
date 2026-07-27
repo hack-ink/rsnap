@@ -4,7 +4,7 @@ description: "Research contract for the scroll-capture prior-art review complete
 type: "Research Contract"
 status: active
 authority: normative
-owner: acgxv/rsnap
+owner: acg-box/rsnap
 last_verified: 2026-07-06
 ---
 
