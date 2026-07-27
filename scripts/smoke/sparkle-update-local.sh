@@ -106,7 +106,7 @@ SH
 		SPARKLE_SIGN_UPDATE="$fake_sign_update" \
 		SPARKLE_ARCHIVE_URL="http://127.0.0.1:9/$ARCHIVE_NAME" \
 		SPARKLE_RELEASE_NOTES_URL="http://127.0.0.1:9/release-notes.html" \
-		"$ROOT_DIR/scripts/release/sparkle-appcast.sh" \
+		"$ROOT_DIR/scripts/release/sparkle-appcast.py" \
 		--archive "$archive" \
 		--appcast "$appcast" \
 		--version "99.0.0" \
@@ -169,7 +169,7 @@ ditto -c -k --sequesterRsrc --keepParent \
 SPARKLE_PRIVATE_ED_KEY="$SPARKLE_PRIVATE_ED_KEY" \
 	SPARKLE_ARCHIVE_URL="$ARCHIVE_URL" \
 	SPARKLE_RELEASE_NOTES_URL="$RELEASE_NOTES_URL" \
-	"$ROOT_DIR/scripts/release/sparkle-appcast.sh" \
+	"$ROOT_DIR/scripts/release/sparkle-appcast.py" \
 	--archive "$SERVER_DIR/$ARCHIVE_NAME" \
 	--appcast "$SERVER_DIR/appcast.xml" \
 	--version "$NEW_VERSION" \

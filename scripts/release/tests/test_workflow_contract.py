@@ -34,7 +34,8 @@ class WorkflowContractTests(unittest.TestCase):
 		self.assertNotIn("workflow_dispatch", workflow)
 		self.assertNotIn("Release Preparation", workflow)
 		self.assertNotIn("Release Dry Run", workflow)
-		self.assertIn("needs: [validate-release, build-macos]", workflow)
+		self.assertIn("source:", workflow)
+		self.assertIn("needs: [source, build-macos]", workflow)
 		self.assertIn("environment:\n      name: release", workflow)
 		for secret in (
 			"APPLE_CERTIFICATE_P12_BASE64",

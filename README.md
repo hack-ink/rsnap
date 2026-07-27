@@ -246,7 +246,7 @@ For durable command selection, verification order, baseline workflow, and asset 
 
 - `docs/runbook/performance-validation.md`
 - `docs/reference/smoke-perf-validation-surface.md`
-- `docs/runbook/validate-release.md`
+- `docs/runbook/release.md`
 
 The capture-session contract lives at `docs/spec/capture-session.md`.
 

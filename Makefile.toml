@@ -150,8 +150,6 @@ args = [
 	"--recursive",
 	"--parallel",
 	"native/macos-host/Sources",
-	"scripts/release/tests/generate-sparkle-test-keys.swift",
-	"scripts/release/verify-sparkle-key.swift",
 	"scripts/smoke/lib/live-hud-mouse-path.swift",
 	"scripts/smoke/lib/mask-probe-capture.swift",
 	"scripts/smoke/lib/pasteboard-image-info.swift",
@@ -171,8 +169,6 @@ args = [
 	"--strict",
 	"--parallel",
 	"native/macos-host/Sources",
-	"scripts/release/tests/generate-sparkle-test-keys.swift",
-	"scripts/release/verify-sparkle-key.swift",
 	"scripts/smoke/lib/live-hud-mouse-path.swift",
 	"scripts/smoke/lib/mask-probe-capture.swift",
 	"scripts/smoke/lib/pasteboard-image-info.swift",
@@ -423,8 +419,8 @@ plutil -extract CFBundleDisplayName raw "$APP_PATH/Contents/Info.plist" | grep -
 plutil -extract CFBundleIdentifier raw "$APP_PATH/Contents/Info.plist" | grep -qx 'ink.hack.rsnap'
 plutil -extract SUFeedURL raw "$APP_PATH/Contents/Info.plist" \
   | grep -qx 'https://github.com/acg-box/rsnap/releases/latest/download/appcast.xml'
-plutil -extract SUPublicEDKey raw "$APP_PATH/Contents/Info.plist" \
-  | grep -qx 'X2EaTv6mCzkYxz75Hh+ldMkKlpzNlHRg5l7Kn9ke8Ow='
+test "$(plutil -extract SUPublicEDKey raw "$APP_PATH/Contents/Info.plist")" \
+  = "$(tr -d '\r\n' < scripts/release/sparkle-public-ed-key.txt)"
 plutil -extract SUEnableAutomaticChecks raw "$APP_PATH/Contents/Info.plist" | grep -qx 'true'
 plutil -extract SUAutomaticallyUpdate raw "$APP_PATH/Contents/Info.plist" | grep -qx 'true'
 plutil -extract SUScheduledCheckInterval raw "$APP_PATH/Contents/Info.plist" | grep -qx '86400'

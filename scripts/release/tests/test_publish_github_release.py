@@ -11,7 +11,7 @@ import unittest
 
 
 REPOSITORY_ROOT = pathlib.Path(__file__).resolve().parents[3]
-PUBLISHER_PATH = REPOSITORY_ROOT / "scripts/release/publish-github-release.sh"
+PUBLISHER_PATH = REPOSITORY_ROOT / "scripts/release/publish-github-release.py"
 ARCHIVE_NAME = "rsnap-aarch64-apple-darwin.zip"
 APPCAST_NAME = "appcast.xml"
 CHECKSUM_NAME = f"{ARCHIVE_NAME}.sha256"
@@ -107,30 +107,29 @@ if endpoint == "repos/acg-box/rsnap/releases/tags/v1.2.3":
     print(json.dumps(load_release()))
 elif endpoint == "repos/acg-box/rsnap/commits/v1.2.3":
     print(json.dumps({"sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}))
-elif endpoint == "repos/acg-box/rsnap/releases?per_page=100":
-    previous = os.environ.get("MOCK_PREVIOUS_VERSION", "1.2.2")
-    releases = []
-    if previous:
-        releases.append({
-            "tag_name": f"v{previous}",
+elif endpoint.startswith("repos/acg-box/rsnap/releases?per_page=100&page="):
+    page = int(endpoint.rsplit("=", 1)[1])
+    versions = [
+        version
+        for version in os.environ.get("MOCK_PUBLISHED_VERSIONS", "1.2.2").split(",")
+        if version
+    ]
+    releases = [
+        {
+            "tag_name": f"v{version}",
             "draft": False,
             "prerelease": False,
-        })
-    pages = [releases]
-    second_page = os.environ.get("MOCK_SECOND_PAGE_VERSION", "")
-    if second_page:
-        pages.append([{
-            "tag_name": f"v{second_page}",
-            "draft": False,
-            "prerelease": False,
-        }])
-    print(json.dumps(pages if "--slurp" in args else releases))
+        }
+        for version in versions
+    ]
+    start = (page - 1) * 100
+    print(json.dumps(releases[start:start + 100]))
 elif endpoint == "repos/acg-box/rsnap/releases" and method == "POST":
     metadata = release_metadata()
     write_release(metadata)
     print(json.dumps(metadata))
 elif endpoint == "repos/acg-box/rsnap/releases/42/assets?per_page=100":
-    print(json.dumps([asset_metadata()]))
+    print(json.dumps(asset_metadata()))
 elif endpoint.startswith("repos/acg-box/rsnap/releases/assets/") and method == "DELETE":
     asset_id = int(endpoint.rsplit("/", 1)[1])
     assets = asset_metadata()
@@ -177,6 +176,10 @@ class PublisherTests(unittest.TestCase):
                 if [[ "${MOCK_VALIDATOR_FAIL:-0}" == "1" ]]; then
                     exit 1
                 fi
+                if [[ "${MOCK_VALIDATOR_FAIL_REMOTE:-0}" == "1" ]] \
+                  && [[ "$(wc -l < "$MOCK_VALIDATOR_LOG")" -gt 1 ]]; then
+                    exit 1
+                fi
                 """
             ),
             encoding="utf-8",
@@ -218,7 +221,7 @@ class PublisherTests(unittest.TestCase):
         self.run_count += 1
         stdout_path = self.root / f"publisher-{self.run_count}.stdout"
         stderr_path = self.root / f"publisher-{self.run_count}.stderr"
-        arguments = ["bash", str(PUBLISHER_PATH)]
+        arguments = [str(PUBLISHER_PATH)]
         with stdout_path.open("w", encoding="utf-8") as stdout_file:
             with stderr_path.open("w", encoding="utf-8") as stderr_file:
                 result = subprocess.run(
@@ -256,7 +259,9 @@ class PublisherTests(unittest.TestCase):
             {path.name for path in (self.state_dir / "assets").iterdir()},
             {ARCHIVE_NAME, APPCAST_NAME, CHECKSUM_NAME},
         )
-        self.assertIn("--assets-json", self.validator_log.read_text(encoding="utf-8"))
+        validator_calls = self.validator_log.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(validator_calls), 1)
+        self.assertIn("--archive", validator_calls[0])
         patch_commands = [
             command
             for command in self.commands()
@@ -291,26 +296,19 @@ class PublisherTests(unittest.TestCase):
         )
         self.assertFalse(release["draft"])
 
-    def test_monotonic_gate_fails_before_draft_creation(self) -> None:
-        result = self.run_publisher(
-            extra_environment={"MOCK_PREVIOUS_VERSION": "2.0.0"},
-        )
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("must be higher", result.stderr)
-        self.assertFalse((self.state_dir / "release.json").exists())
-
-    def test_monotonic_gate_reads_all_release_pages(self) -> None:
+    def test_monotonic_gate_scans_all_published_releases(self) -> None:
+        published_versions = [f"0.0.{patch}" for patch in range(1, 101)]
+        published_versions.append("2.0.0")
         result = self.run_publisher(
             extra_environment={
-                "MOCK_PREVIOUS_VERSION": "1.0.0",
-                "MOCK_SECOND_PAGE_VERSION": "2.0.0",
+                "MOCK_PUBLISHED_VERSIONS": ",".join(published_versions),
             },
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("must be higher", result.stderr)
         self.assertFalse((self.state_dir / "release.json").exists())
 
-    def test_published_release_validates_remote_bytes_independently(self) -> None:
+    def seed_published_release(self) -> None:
         self.state_dir.mkdir(parents=True)
         (self.state_dir / "assets").mkdir()
         release = {
@@ -331,15 +329,27 @@ class PublisherTests(unittest.TestCase):
                 f"published {name}".encode()
             )
 
-        result = self.run_publisher(
-            extra_environment={"MOCK_PREVIOUS_VERSION": "9.9.9"},
-        )
+    def test_published_release_is_idempotent(self) -> None:
+        self.seed_published_release()
+
+        result = self.run_publisher()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("already public", result.stdout)
         validator_calls = self.validator_log.read_text(encoding="utf-8").splitlines()
         self.assertEqual(len(validator_calls), 2)
-        self.assertIn("--release-state published", validator_calls[-1])
-        self.assertNotIn(str(self.input_dir), validator_calls[-1])
+        self.assertIn("rsnap-release-download-", validator_calls[1])
+        self.assertFalse(
+            any(command[0:3] == ["api", "--method", "PATCH"] for command in self.commands())
+        )
+
+    def test_invalid_published_release_fails(self) -> None:
+        self.seed_published_release()
+
+        result = self.run_publisher(
+            extra_environment={"MOCK_VALIDATOR_FAIL_REMOTE": "1"},
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("artifact validation failed", result.stderr)
         self.assertFalse(
             any(command[0:3] == ["api", "--method", "PATCH"] for command in self.commands())
         )

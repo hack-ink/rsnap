@@ -35,7 +35,6 @@ class ReleaseSourceValidatorTests(unittest.TestCase):
     def _write_fixture(self) -> None:
         (self.repo / "apps/rsnap").mkdir(parents=True)
         (self.repo / "packages/rsnap-core").mkdir(parents=True)
-        (self.repo / "native/macos-host").mkdir(parents=True)
         (self.repo / "Cargo.toml").write_text(
             """
 [workspace]
@@ -71,39 +70,6 @@ version = "1.2.3"
 name = "rsnap-core"
 version = "1.2.3"
 """.lstrip(),
-            encoding="utf-8",
-        )
-        (self.repo / "native/macos-host/Package.swift").write_text(
-            """
-// swift-tools-version: 6.0
-import PackageDescription
-
-let package = Package(
-    name: "RsnapNativeHost",
-    dependencies: [
-        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.4"),
-    ]
-)
-""".lstrip(),
-            encoding="utf-8",
-        )
-        (self.repo / "native/macos-host/Package.resolved").write_text(
-            json.dumps(
-                {
-                    "pins": [
-                        {
-                            "identity": "sparkle",
-                            "kind": "remoteSourceControl",
-                            "location": "https://github.com/sparkle-project/Sparkle",
-                            "state": {
-                                "revision": "b6496a74a087257ef5e6da1c5b29a447a60f5bd7",
-                                "version": "2.9.4",
-                            },
-                        }
-                    ],
-                    "version": 3,
-                }
-            ),
             encoding="utf-8",
         )
 
@@ -197,7 +163,6 @@ let package = Package(
             [
                 "version=1.2.3",
                 f"tag_commit={self.release_commit}",
-                "sparkle_version=2.9.4",
             ],
         )
 
@@ -263,35 +228,6 @@ let package = Package(
         self.assert_validation_fails(
             result, "stable vX.Y.Z SemVer without leading zeroes"
         )
-
-    def test_mismatched_sparkle_pin_is_rejected(self) -> None:
-        resolved_path = self.repo / "native/macos-host/Package.resolved"
-        resolved = json.loads(resolved_path.read_text(encoding="utf-8"))
-        resolved["pins"][0]["state"]["version"] = "2.9.5"
-        resolved_path.write_text(json.dumps(resolved), encoding="utf-8")
-
-        result = self.run_validator()
-
-        self.assert_validation_fails(
-            result,
-            "Package.resolved Sparkle version does not match Package.swift exact version",
-        )
-
-    def test_sparkle_exact_version_with_leading_zero_is_rejected(self) -> None:
-        package_path = self.repo / "native/macos-host/Package.swift"
-        package_source = package_path.read_text(encoding="utf-8")
-        package_path.write_text(
-            package_source.replace('exact: "2.9.4"', 'exact: "02.9.4"'),
-            encoding="utf-8",
-        )
-
-        result = self.run_validator()
-
-        self.assert_validation_fails(
-            result,
-            "Sparkle exact version must be stable X.Y.Z SemVer without leading zeroes",
-        )
-
 
 if __name__ == "__main__":
     unittest.main()

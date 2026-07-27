@@ -14,11 +14,9 @@ Required:
 Optional:
   --keychain PATH                    keychain that contains the signing identity
   --entitlements PATH                entitlements for the outer app
-  --downloader-entitlements PATH     replacement entitlements for Downloader.xpc
 
-If --downloader-entitlements is omitted, Downloader.xpc keeps the entitlements
-from its existing Sparkle signature. Apple Development and ad-hoc signatures
-disable the secure timestamp. Other identities require a secure timestamp.
+The identity must be an Apple Development identity or "-" for local ad-hoc
+signing. Downloader.xpc keeps the entitlements from its Sparkle signature.
 USAGE
 }
 
@@ -26,7 +24,6 @@ app=""
 identity=""
 keychain=""
 app_entitlements=""
-downloader_entitlements=""
 
 while [[ $# -gt 0 ]]; do
 	case "$1" in
@@ -44,10 +41,6 @@ while [[ $# -gt 0 ]]; do
 			;;
 		--entitlements)
 			app_entitlements="${2:-}"
-			shift 2
-			;;
-		--downloader-entitlements)
-			downloader_entitlements="${2:-}"
 			shift 2
 			;;
 		-h|--help)
@@ -78,12 +71,19 @@ if [[ -n "$keychain" && ! -f "$keychain" ]]; then
 	exit 1
 fi
 
-for entitlements in "$app_entitlements" "$downloader_entitlements"; do
-	if [[ -n "$entitlements" && ! -f "$entitlements" ]]; then
-		echo "error: entitlements file not found: $entitlements" >&2
+if [[ -n "$app_entitlements" && ! -f "$app_entitlements" ]]; then
+	echo "error: entitlements file not found: $app_entitlements" >&2
+	exit 1
+fi
+
+case "$identity" in
+	Apple\ Development:*|-)
+		;;
+	*)
+		echo "error: identity must be Apple Development or - for ad-hoc signing" >&2
 		exit 1
-	fi
-done
+		;;
+esac
 
 codesign_bin="${CODESIGN_BIN:-/usr/bin/codesign}"
 if [[ ! -x "$codesign_bin" ]]; then
@@ -126,16 +126,8 @@ sign_common=(
 	--force
 	--options runtime
 	--sign "$identity"
+	--timestamp=none
 )
-
-case "$identity" in
-	Apple\ Development:*|-)
-		sign_common+=(--timestamp=none)
-		;;
-	*)
-		sign_common+=(--timestamp)
-		;;
-esac
 
 if [[ -n "$keychain" ]]; then
 	sign_common+=(--keychain "$keychain")
@@ -148,13 +140,7 @@ sign_component() {
 }
 
 sign_component "$installer"
-
-if [[ -n "$downloader_entitlements" ]]; then
-	sign_component "$downloader" --entitlements "$downloader_entitlements"
-else
-	sign_component "$downloader" --preserve-metadata=entitlements
-fi
-
+sign_component "$downloader" --preserve-metadata=entitlements
 sign_component "$autoupdate"
 sign_component "$updater"
 sign_component "$sparkle_framework"

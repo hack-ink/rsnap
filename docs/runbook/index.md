@@ -53,7 +53,7 @@ Then structure the body for execution:
 - Group runbooks by workflow or subsystem only when multiple runbooks exist and the grouping
   improves retrieval.
 - Do not create empty category folders or placeholder section headings.
-- Prefer titles that encode the task or outcome, such as `validate-release.md` or
+- Prefer titles that encode the task or outcome, such as `release.md` or
   `rerun-ingest-job.md`.
 - Keep the runbook index as a router, not a dumping ground for long explanations.
 
@@ -69,8 +69,7 @@ Then structure the body for execution:
 - `docs/runbook/scroll-capture-benchmarks.md` for deterministic scroll-capture benchmark usage
 - `docs/runbook/telemetry-debugging.md` for collecting and summarizing native-host OSLog plus
   Rust rolling logs during runtime debugging
-- `docs/runbook/validate-release.md` for the formal release-candidate and published-artifact
-  validation sequence
+- `docs/runbook/release.md` for creating and verifying a stable Rsnap release
 
 Historical validation material is archived outside the active runbook lane and should not be used
 as the default validation route for reset work.

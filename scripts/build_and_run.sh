@@ -2,14 +2,13 @@
 set -euo pipefail
 
 MODE="${1:-run}"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="Rsnap"
 EXECUTABLE_NAME="RsnapNativeHost"
 BUNDLE_ID="ink.hack.rsnap"
 MIN_SYSTEM_VERSION="14.0"
 DEFAULT_SIGN_IDENTITY="x@acg.box"
-DEFAULT_SPARKLE_PUBLIC_ED_KEY="X2EaTv6mCzkYxz75Hh+ldMkKlpzNlHRg5l7Kn9ke8Ow="
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PACKAGE_DIR="$ROOT_DIR/native/macos-host"
 COMMON_ROOT="$(cd "$(git -C "$ROOT_DIR" rev-parse --git-common-dir)/.." && pwd)"
 STAGE_DIR="${RSNAP_NATIVE_HOST_STAGE_DIR:-$COMMON_ROOT/target/rsnap-native-host}"
@@ -29,7 +28,7 @@ STATUS_ICON_NAME="StatusBarIcon.png"
 SPARKLE_APPCAST_URL="${RSNAP_SPARKLE_APPCAST_URL:-https://github.com/acg-box/rsnap/releases/latest/download/appcast.xml}"
 # The public update key is safe to ship in source. The override exists only for
 # local Sparkle smoke tests that generate a disposable key pair and appcast.
-SPARKLE_PUBLIC_ED_KEY="${RSNAP_SPARKLE_PUBLIC_ED_KEY:-$DEFAULT_SPARKLE_PUBLIC_ED_KEY}"
+SPARKLE_PUBLIC_ED_KEY="${RSNAP_SPARKLE_PUBLIC_ED_KEY:-$(tr -d '\r\n' <"$ROOT_DIR/scripts/release/sparkle-public-ed-key.txt")}"
 BUILD_ROOT=""
 BUILD_BINARY=""
 SWIFT_BUILD_FLAGS=()
@@ -436,6 +435,7 @@ targets = [
 	"packages/rsnap-host-ffi",
 	"scripts/build_and_run.sh",
 	"scripts/release/sign-macos-app.sh",
+	"scripts/release/sparkle-public-ed-key.txt",
 ]
 skip_dirs = {".git", ".worktrees", "target", ".build"}
 

@@ -18,17 +18,6 @@ STABLE_VERSION_PATTERN = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0
 STABLE_TAG_PATTERN = re.compile(
     r"v((?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))"
 )
-SPARKLE_LOCATION = "https://github.com/sparkle-project/Sparkle"
-SPARKLE_EXACT_PATTERN = re.compile(
-    r"""
-    \.package
-    \s*\(
-    \s*url:\s*"https://github\.com/sparkle-project/Sparkle(?:\.git)?"
-    \s*,\s*exact:\s*"([^"]+)"
-    \s*\)
-    """,
-    re.VERBOSE | re.DOTALL,
-)
 
 
 class ValidationError(RuntimeError):
@@ -253,64 +242,12 @@ def validate_cargo_versions(repo_root: Path, tag_version: str) -> str:
     return version
 
 
-def validate_sparkle_pin(repo_root: Path) -> str:
-    """Validate that SwiftPM uses one exact Sparkle version and matching pin."""
-    package_path = repo_root / "native/macos-host/Package.swift"
-    package_source = package_path.read_text(encoding="utf-8")
-    sparkle_mentions = package_source.count("github.com/sparkle-project/Sparkle")
-    exact_matches = SPARKLE_EXACT_PATTERN.findall(package_source)
-    if sparkle_mentions != 1 or len(exact_matches) != 1:
-        raise ValidationError(
-            "Package.swift must declare Sparkle exactly once with an exact version"
-        )
-    sparkle_version = exact_matches[0]
-    if STABLE_VERSION_PATTERN.fullmatch(sparkle_version) is None:
-        raise ValidationError(
-            "Package.swift Sparkle exact version must be stable X.Y.Z SemVer "
-            "without leading zeroes"
-        )
-
-    resolved_path = repo_root / "native/macos-host/Package.resolved"
-    try:
-        resolved = json.loads(resolved_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        raise ValidationError(f"cannot read Package.resolved: {error}") from error
-    pins = resolved.get("pins") if isinstance(resolved, dict) else None
-    if not isinstance(pins, list):
-        raise ValidationError("Package.resolved is missing pins")
-    sparkle_pins = [
-        pin
-        for pin in pins
-        if isinstance(pin, dict) and str(pin.get("identity", "")).lower() == "sparkle"
-    ]
-    if len(sparkle_pins) != 1:
-        raise ValidationError("Package.resolved must contain exactly one Sparkle pin")
-
-    sparkle_pin = sparkle_pins[0]
-    location = str(sparkle_pin.get("location", "")).removesuffix(".git")
-    if location != SPARKLE_LOCATION:
-        raise ValidationError(f"Package.resolved Sparkle location is not {SPARKLE_LOCATION}")
-    state = sparkle_pin.get("state")
-    if not isinstance(state, dict):
-        raise ValidationError("Package.resolved Sparkle pin has no state")
-    if state.get("version") != sparkle_version:
-        raise ValidationError(
-            "Package.resolved Sparkle version does not match Package.swift exact version"
-        )
-    revision = state.get("revision")
-    if not isinstance(revision, str) or re.fullmatch(r"[0-9a-fA-F]{40,64}", revision) is None:
-        raise ValidationError("Package.resolved Sparkle pin has no full revision")
-
-    return sparkle_version
-
-
-def write_outputs(version: str, tag_commit: str, sparkle_version: str) -> None:
+def write_outputs(version: str, tag_commit: str) -> None:
     """Write validated values to the GitHub Actions output file."""
     output_path = Path(require_environment("GITHUB_OUTPUT"))
     with output_path.open("a", encoding="utf-8") as stream:
         stream.write(f"version={version}\n")
         stream.write(f"tag_commit={tag_commit}\n")
-        stream.write(f"sparkle_version={sparkle_version}\n")
 
 
 def main() -> int:
@@ -334,12 +271,8 @@ def main() -> int:
     _, event_after = validate_github_event(tag)
     tag_commit = validate_tag_and_source(repo_root, tag, event_after)
     version = validate_cargo_versions(repo_root, tag_version)
-    sparkle_version = validate_sparkle_pin(repo_root)
-    write_outputs(version, tag_commit, sparkle_version)
-    print(
-        f"validated release source: version={version} "
-        f"tag_commit={tag_commit} sparkle_version={sparkle_version}"
-    )
+    write_outputs(version, tag_commit)
+    print(f"validated release source: version={version} tag_commit={tag_commit}")
     return 0
 
 

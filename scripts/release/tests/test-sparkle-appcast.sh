@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-APPCAST_TOOL="$ROOT_DIR/scripts/release/sparkle-appcast.sh"
+APPCAST_TOOL="$ROOT_DIR/scripts/release/sparkle-appcast.py"
 APPCAST_ASSERTION="$ROOT_DIR/scripts/release/tests/assert-sparkle-appcast.py"
 TEST_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TEST_ROOT"' EXIT
