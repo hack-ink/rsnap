@@ -41,10 +41,13 @@ class WorkflowContractTests(unittest.TestCase):
 			"APPLE_CERTIFICATE_P12_BASE64",
 			"APPLE_CERTIFICATE_PASSWORD",
 			"APPLE_SIGNING_IDENTITY",
-			"SPARKLE_PRIVATE_ED_KEY",
 		):
 			self.assertIn(f"secrets.{secret}", workflow)
-		self.assertNotIn("RSNAP_SPARKLE_PRIVATE_ED_KEY", workflow)
+		self.assertIn(
+			"SPARKLE_PRIVATE_ED_KEY: ${{ secrets.RSNAP_SPARKLE_PRIVATE_ED_KEY }}",
+			workflow,
+		)
+		self.assertNotIn("secrets.SPARKLE_PRIVATE_ED_KEY", workflow)
 		self.assertNotIn("APPLE_DEVELOPER_ID_APPLICATION", workflow)
 		self.assertNotIn("APPLE_NOTARY_", workflow)
 		self.assertNotIn("notarytool", workflow)

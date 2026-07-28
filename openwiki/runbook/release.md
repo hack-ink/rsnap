@@ -5,7 +5,7 @@ type: "Runbook"
 status: active
 authority: normative
 owner: acg-box/rsnap
-last_verified: 2026-07-27
+last_verified: 2026-07-28
 ---
 # Release Rsnap
 
@@ -13,9 +13,10 @@ Goal: Publish one stable Rsnap macOS release from an immutable tag.
 
 Read this when: You are preparing a `vX.Y.Z` release or verifying its published assets.
 
-Preconditions: `main` is clean and synced, the release version is committed, the organization
-secrets and `release` environment defined by [`openwiki/spec/release-distribution.md`](../spec/release-distribution.md) are available, and
-a logged-in macOS desktop session is available for smoke checks.
+Preconditions: `main` is clean and synced, the release version is committed, the Apple signing
+secrets, the Rsnap repository Sparkle secret, and the `release` environment defined by
+[`openwiki/spec/release-distribution.md`](../spec/release-distribution.md) are available, and a
+logged-in macOS desktop session is available for smoke checks.
 
 Depends on: [`openwiki/spec/release-distribution.md`](../spec/release-distribution.md); [`openwiki/spec/capture-session.md`](../spec/capture-session.md);
 [`openwiki/spec/settings.md`](../spec/settings.md); [`openwiki/runbook/performance-validation.md`](./performance-validation.md)

@@ -5,7 +5,7 @@ type: "Spec"
 status: active
 authority: normative
 owner: acg-box/rsnap
-last_verified: 2026-07-27
+last_verified: 2026-07-28
 ---
 # Release Distribution Contract
 
@@ -77,7 +77,8 @@ The appcast:
 - uses the canonical `acg-box/rsnap` release and download URLs
 - uses the release version from the validated tag
 - records the exact ZIP byte length
-- contains a Sparkle EdDSA signature made with `SPARKLE_PRIVATE_ED_KEY`
+- contains a Sparkle EdDSA signature made from the repository secret
+  `RSNAP_SPARKLE_PRIVATE_ED_KEY`, passed to the signer as `SPARKLE_PRIVATE_ED_KEY`
 - verifies with the public key embedded in `Rsnap.app`
 
 The checksum file contains the lowercase SHA-256 digest of the final ZIP and the canonical ZIP
@@ -97,11 +98,15 @@ file name.
 
 ## Secret contract
 
-The required GitHub Actions secrets are organization secrets with visibility `all`:
+The required Apple signing credentials are GitHub organization secrets with visibility `all`:
 
 - `APPLE_CERTIFICATE_P12_BASE64`
 - `APPLE_CERTIFICATE_PASSWORD`
 - `APPLE_SIGNING_IDENTITY`
-- `SPARKLE_PRIVATE_ED_KEY`
 
-Repository and environment secrets must not shadow these names.
+`RSNAP_SPARKLE_PRIVATE_ED_KEY` is an Rsnap repository secret. It contains the private key that
+matches `scripts/release/sparkle-public-ed-key.txt`. The Sparkle private key must not be an
+organization or environment secret.
+
+Repository and environment secrets must not shadow the Apple signing credential names. The
+`release` environment stores no secrets.
