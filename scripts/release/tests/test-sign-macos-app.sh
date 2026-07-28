@@ -25,7 +25,7 @@ if [[ " $* " == *" -dv "* ]]; then
 	cat >&2 <<'DETAILS'
 CodeDirectory v=20500 size=1 flags=0x10000(runtime) hashes=1+0 location=embedded
 Authority=Apple Development: Test (RD3D4LH465)
-TeamIdentifier=RD3D4LH465
+TeamIdentifier=T54QFA7W2S
 DETAILS
 fi
 if [[ " $* " == *" --entitlements :- "* ]]; then
@@ -143,6 +143,20 @@ if CODESIGN_BIN="$FAKE_CODESIGN" "$SIGNER" \
 fi
 if [[ -s "$CODESIGN_LOG" ]]; then
 	echo "signer called codesign before rejecting an unexpected team" >&2
+	exit 1
+fi
+
+wrong_team_details_app="$(make_fixture "$TEST_ROOT/wrong-team-details")"
+wrong_team_codesign="$TEST_ROOT/wrong-team-codesign"
+sed 's/TeamIdentifier=T54QFA7W2S/TeamIdentifier=RD3D4LH465/' \
+	"$FAKE_CODESIGN" >"$wrong_team_codesign"
+chmod +x "$wrong_team_codesign"
+: >"$CODESIGN_LOG"
+if CODESIGN_BIN="$wrong_team_codesign" "$SIGNER" \
+	--app "$wrong_team_details_app" \
+	--identity "Apple Development: Test (RD3D4LH465)" \
+	--keychain "$keychain" >/dev/null 2>&1; then
+	echo "signer accepted the identity suffix as the code-signing TeamIdentifier" >&2
 	exit 1
 fi
 unsafe_target_app="$(make_fixture "$TEST_ROOT/unsafe-target")"

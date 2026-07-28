@@ -63,15 +63,17 @@ Defines:
 - The package job runs on the standard GitHub-hosted ARM64 `macos-26` runner.
 - The job runs the release test surface before it creates release assets.
 - The app bundle name is `Rsnap.app`, and its bundle identifier is `ink.hack.rsnap`.
-- The release identity is an Apple Development identity for Personal Team `RD3D4LH465`.
+- The release identity is an Apple Development identity whose certificate label ends with
+  `RD3D4LH465`. The signed code reports the code-signing `TeamIdentifier` `T54QFA7W2S`.
 - The temporary keychain contains exactly one valid certificate and private-key identity, and it
-  is the requested release identity.
+  is the requested release identity. Before key partition access is configured, packaging makes
+  that keychain the sole user search-list keychain and the user default keychain.
 - The build and credential-free tests finish before the workflow writes signing credentials.
 - Signing starts at the innermost Sparkle code and finishes with `Rsnap.app`.
 - The signer accepts only the known Sparkle 2.9.4 code graph. `Versions/Current` must use one safe
   direct-child version directory, and `Versions` must not contain another entry.
-- Each signed code object uses Hardened Runtime, the exact Apple Development authority, Personal
-  Team `RD3D4LH465`, and no timestamp. The outer app must not contain the
+- Each signed code object uses Hardened Runtime, the exact Apple Development authority,
+  code-signing `TeamIdentifier` `T54QFA7W2S`, and no timestamp. The outer app must not contain the
   `get-task-allow` or `disable-library-validation` entitlement.
 - `codesign --deep` can verify the final bundle. It must not sign the bundle.
 - The Personal Team package is signed but not notarized.
