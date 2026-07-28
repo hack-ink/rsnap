@@ -621,6 +621,29 @@ export class Publisher {
 		return matching[0];
 	}
 
+	private async waitForSameTagRelease(
+		expectedId: number | undefined,
+		expectedDraft: boolean,
+		errorMessage: string,
+	): Promise<RemoteRelease> {
+		for (let attempt = 0; attempt <= MAX_SAFE_RETRIES; attempt += 1) {
+			const release = await this.getSameTagRelease();
+			if (release !== undefined) {
+				requireCondition(
+					expectedId === undefined || release.id === expectedId,
+					'release ID changed',
+				);
+				if (release.draft === expectedDraft) {
+					return release;
+				}
+			}
+			if (attempt < MAX_SAFE_RETRIES) {
+				await this.transport.wait(Math.min(MAX_RETRY_DELAY_MS, 1_000 * 2 ** attempt));
+			}
+		}
+		throw new ContractError(errorMessage);
+	}
+
 	private async validateAllStableReleases(allowSameTag: boolean): Promise<void> {
 		for (const release of await this.listAllReleases()) {
 			if (release.draft || release.prerelease) {
@@ -662,12 +685,11 @@ export class Publisher {
 				throw error;
 			}
 			await this.transport.wait(error instanceof HttpError ? error.retryAfterMs : 1_000);
-			const recovered = await this.getSameTagRelease();
-			requireCondition(
-				recovered !== undefined,
+			return await this.waitForSameTagRelease(
+				undefined,
+				true,
 				'draft creation failed without a recoverable release',
 			);
-			return recovered;
 		}
 	}
 
@@ -927,10 +949,7 @@ export class Publisher {
 		const publishedRetry = await this.getPublishedSameTagRelease();
 		if (publishedRetry !== undefined) {
 			this.validateReleaseState(publishedRetry, false);
-			const sameTag = await this.getSameTagRelease();
-			requireCondition(sameTag !== undefined, 'published release disappeared');
-			this.validateReleaseState(sameTag, false, publishedRetry.id);
-			await this.downloadAndValidate(sameTag.id, true, false);
+			await this.downloadAndValidate(publishedRetry.id, true, false);
 			return 'already-public';
 		}
 
@@ -955,8 +974,11 @@ export class Publisher {
 
 		await this.remoteSourceRecheck();
 		await this.validateAllStableReleases(false);
-		const finalDraft = await this.getSameTagRelease();
-		requireCondition(finalDraft !== undefined, 'draft release disappeared before publication');
+		const finalDraft = await this.waitForSameTagRelease(
+			release.id,
+			true,
+			'draft release did not converge before publication',
+		);
 		this.validateReleaseState(finalDraft, true, release.id);
 		await this.downloadAndValidate(release.id, false, true);
 		let publishedValue: unknown;
@@ -971,26 +993,20 @@ export class Publisher {
 			if (error instanceof HttpError && !error.transient) {
 				throw error;
 			}
-			const finalState = await this.getSameTagRelease();
-			requireCondition(
-				finalState !== undefined,
-				'publication result is unknown and release disappeared',
+			const finalState = await this.waitForSameTagRelease(
+				release.id,
+				false,
+				'publication result is unknown and release did not converge to public',
 			);
-			if (!finalState.draft) {
-				this.validateReleaseState(finalState, false, release.id);
-				await this.downloadAndValidate(finalState.id, true, true);
-				return 'published';
-			}
-			this.validateReleaseState(finalState, true, release.id);
-			throw new ContractError(
-				'publication result is unknown; verified release remains a draft',
-			);
+			this.validateReleaseState(finalState, false, release.id);
+			await this.downloadAndValidate(finalState.id, true, true);
+			return 'published';
 		}
 		this.validateReleaseState(parseRelease(publishedValue), false, release.id);
-		const publicRelease = await this.getPublishedSameTagRelease();
-		requireCondition(
-			publicRelease !== undefined,
-			'published release disappeared after publication',
+		const publicRelease = await this.waitForSameTagRelease(
+			release.id,
+			false,
+			'published release did not converge after publication',
 		);
 		this.validateReleaseState(publicRelease, false, release.id);
 		await this.downloadAndValidate(publicRelease.id, true, true);
