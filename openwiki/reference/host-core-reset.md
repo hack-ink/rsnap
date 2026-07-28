@@ -1,0 +1,299 @@
+---
+title: "Host/Core Reset Reference"
+description: "Current-state implementation and ownership reference for Host/Core Reset Reference."
+type: "Reference"
+status: active
+authority: normative
+owner: acg-box/rsnap
+last_verified: 2026-07-06
+---
+# Host/Core Reset Reference
+
+Purpose: Describe the active target architecture for the Rsnap reset lane and how new work should
+behave while the checked-in codebase is still transitional.
+
+Read this when: You are planning architecture work, deciding whether a change deepens the right
+boundary, or trying to understand the intended end state of the reset project.
+
+Inputs: [`openwiki/spec/platform-host-boundary.md`](../spec/platform-host-boundary.md); [`openwiki/spec/capture-session.md`](../spec/capture-session.md);
+[`openwiki/decisions/native-host-rust-core-reset.md`](../decisions/native-host-rust-core-reset.md); [`openwiki/reference/workspace-layout.md`](./workspace-layout.md)
+
+Depends on: [`openwiki/spec/platform-host-boundary.md`](../spec/platform-host-boundary.md);
+[`openwiki/decisions/native-host-rust-core-reset.md`](../decisions/native-host-rust-core-reset.md)
+
+Covers: The target architecture, migration posture, and the relationship between the target design
+and the current checked-in repository layout.
+
+## Target architecture
+
+The active reset target is:
+
+- native platform hosts own operating-system semantics
+- Rust owns cross-platform product semantics
+
+In practical terms:
+
+- native hosts own capture-window lifecycle, focus/activation, cursor, IME, permissions, and
+  native capture capabilities. On macOS, Swift also discovers OS-only resources such as the current
+  wallpaper path, converts captured images into bridgeable buffers, presents returned pixels, and
+  performs host-side effects such as clipboard, save-panel, OCR, and update UI.
+- Rust owns capture-session state, geometry, annotations, export composition, capture-frame
+  planning/rendering, wallpaper thumbnail decoding/caching, scroll stitching, minimap planning,
+  selection transforms, auto-centering, replay, and deterministic product logic.
+- host and core communicate through an explicit protocol instead of sharing ownership of OS-facing
+  behavior
+
+## What this means for the current tree
+
+The checked-in repository does not yet fully match the target design.
+
+Today:
+
+- `apps/rsnap/` is now the thin launcher/bootstrap layer for the staged native host bundle
+- `packages/rsnap-capture-core/` is now the checked-in landing zone for portable geometry,
+  semantic scene models, host/core protocol types, export/crop/PNG encoding, frozen-overlay edit
+  state and export composition, capture-frame planning/rendering, wallpaper thumbnail
+  decode/cache, minimap planning, scroll stitching, mosaic generation, frozen-selection
+  transforms, auto-centering, and live-sample pixel helpers
+- `packages/rsnap-host-ffi/` is now the checked-in thin C ABI bridge for the native macOS host and
+  ships the checked-in header at `packages/rsnap-host-ffi/include/rsnap_host_ffi.h`
+- `native/macos-host/` is now the visible app shell and owns clipboard, save, and deferred OCR
+  publication for the reset lane. It calls `RsnapHostBridge` for Rust-owned session, export,
+  capture-frame, wallpaper thumbnail, minimap, selection-transform, auto-center, and sampling
+  algorithms rather than keeping parallel Swift implementations.
+
+During the reset, treat these as implementation containers rather than the final architecture
+story.
+
+## Current macOS Swift residual map
+
+The remaining Swift code is not expected to collapse to zero during the reset. It should shrink only
+where Swift is still holding deterministic product logic that belongs in Rust.
+
+The current native-host Swift split is:
+
+- `NativeHostApp.swift`: app delegate, menu bar lifecycle, settings/hotkey wiring, launch,
+  permission orchestration, onboarding, software-update wiring, and status-menu state.
+- `CaptureSessionController.swift` plus `CaptureSessionController+*.swift`: the Swift host-session
+  coordinator around the Rust `RsnapHostSession`. The base file owns shared controller state and
+  lifecycle hooks; the extensions split live capture/input, frozen selection interactions,
+  host-request draining, native scroll-capture lifecycle, copy/save/export effects, prepared export
+  scheduling, Vision OCR, and runtime teardown/window helpers.
+- `NativeScrollCaptureWheelInput.swift`: native scroll-capture wheel interception, global monitor
+  lifecycle, forwarded CGEvent posting, queued forwarded-delta draining, and motion-hint updates.
+- `NativeScrollCaptureObservationPipeline.swift`: native scroll-capture sample batching, fallback
+  sample adaptation, Rust scroll-observation calls, and preview export refresh packaging. It keeps
+  ordered frame acquisition and AppKit scheduling in Swift while leaving stitching decisions in
+  Rust.
+- `CaptureChrome.swift`: shared native chrome metrics, palette, dashed-border geometry, and
+  AppKit color/image helpers used by live and frozen capture UI.
+- `CaptureOverlayWindow.swift`: the AppKit `NSPanel` wrapper that embeds `CaptureHostView` for each
+  capture overlay window.
+- `CaptureOverlayController.swift`: AppKit overlay-window set management, focus/first-responder
+  routing, capture-stream preparation, and mouse passthrough.
+- `CaptureOverlayImageSampler.swift`: CoreGraphics below-overlay capture and display-point sample
+  adaptation used by overlay windows, live chrome, and scroll fallback acquisition.
+- `FrozenFrameAuthority.swift`: frozen-frame authority state, frame storage, setup completion, and
+  telemetry bookkeeping.
+- `FrozenFrameAuthority+StreamSetup.swift`: ScreenCaptureKit frozen-frame stream setup,
+  shareable-content lookup, self-capture-safe stream gating, and lifecycle reset.
+- `FrozenFrameAuthority+SnapshotResolution.swift`: frozen-frame latch-token resolution, RGB/loupe
+  sampling, self-capture-safe frame gating, and fresh-frame authority decisions.
+- `FrozenFrameStreamOutput.swift`: ScreenCaptureKit stream-output delegate adaptation,
+  usable-frame filtering, display-time conversion, and frame-record emission into the authority.
+- `FrozenFrameContentFilterPlanner.swift`: frozen-frame display target planning, shareable-content
+  cache freshness, self-capture-excluding content filter construction, and stream configuration.
+- `NSScreenDisplayID.swift`: shared AppKit display-ID extraction for native capture surfaces.
+- `FrozenFramePixelBufferBridge.swift`: CVPixelBuffer lock/lifetime adaptation for frozen-frame
+  CGImage creation, RGB sampling, and loupe patch extraction.
+- `CaptureHostAnnotationStyleWheelGate.swift`: frozen annotation-size wheel dead-zone and
+  per-gesture step throttling.
+- `CaptureHostToolbarHoverState.swift`: frozen toolbar hover target state, change detection, and
+  clearing behavior.
+- `CaptureHostFrozenToolbarCoordinator.swift`: capture-host frozen toolbar visible item planning,
+  hit testing, hover state ownership, and toolbar action dispatch into the session controller.
+- `CaptureHostFrozenFirstDisplayHandoffState.swift`: capture-host frozen-entry first-display
+  handoff state, completion queueing, pending-frame evidence, and deferred classic toolbar glass.
+- `CaptureHostScrollToolbarBackdropState.swift`: capture-host scroll toolbar backdrop capture
+  generation, seed-patch cache, active frame, refresh cadence, and change-count state.
+- `CaptureHostScrollToolbarBackdropWorker.swift`: capture-host scroll toolbar backdrop live-frame
+  freshness, signature hashing, fallback capture selection, and capture result shaping.
+- `CaptureHostView.swift`: AppKit view orchestration, hit testing, and frozen presentation
+  rendering.
+- `CaptureHostMaterialViewCoordinator.swift`: capture-host Liquid Glass/material subview ownership,
+  classic glass patch resolution, and scroll-toolbar backdrop refresh scheduling plus view
+  installation.
+- `CaptureHostGlassPatchResolver.swift`: capture-host classic glass patch cache lookup, frozen
+  display crop extraction, and CoreImage blur/tint adaptation for HUD, loupe, and toolbar surfaces.
+- `FrozenPreparedExportStore.swift`: frozen export render requests, prepared export cache keys,
+  copy/save/recognize-text job result models, and thread-safe prepared image stores.
+- `FrozenSelectionImageRenderer.swift`: frozen selection render jobs, capture-frame effect
+  application, overlay composition, display cropping, and PNG encoding for copy/save/OCR
+  preparation.
+- `CaptureHostFrozenPresentationRenderer.swift`: frozen display surface, selection chrome, overlay,
+  minimap, size badge, and classic toolbar drawing orchestration from an explicit host context.
+- `CaptureHostFrozenSelectionChromeRenderer.swift`: frozen selection scrim, dashed border, resize
+  handles, and selection-size badge rendering.
+- `CaptureHostFrozenOverlayRenderer.swift`: frozen annotation overlay rendering for mosaic,
+  spotlight, pen, arrow, and text overlays.
+- `CaptureHostScrollMinimapRenderer.swift`: frozen scroll-capture minimap presentation over the
+  Rust-owned minimap layout plan and host-provided preview image.
+- `CaptureHostLiveSampleCache.swift`: capture-host live chrome/RGB sample reuse cache and pointer
+  sample matching.
+- `CaptureHostLiveSampleResolver.swift`: capture-host live chrome/RGB sample resolution,
+  loupe-patch reuse, and cache seeding policy.
+- `CaptureHostLiveInputTelemetry.swift`: capture-host live pointer/mouse input telemetry,
+  pointer-event gap recording, and live-chrome input summary emission.
+- `CaptureHostLivePointerPreviewState.swift`: capture-host live pointer preview point,
+  input-latency timestamp, sequence, and duplicate-move suppression state.
+- `CaptureHostLivePrimaryInteractionState.swift`: capture-host live primary drag, release,
+  completion, and hover-suppression state transitions.
+- `CaptureHostMouseReleaseRecovery.swift`: capture-host local mouse-up monitor and live/frozen
+  release-watchdog scheduling for AppKit interactions whose mouse-up event can be missed.
+- `CaptureHostPointerDispatch.swift`: capture-host pointer dispatch events, a shared delivery queue
+  with per-track throttling state, and AppKit-to-controller pointer delivery support.
+- `CaptureHostView+InputRouting.swift`: capture-host AppKit mouse, wheel, key, cursor, toolbar
+  shortcut, and pointer-dispatch routing into the session controller.
+- `CaptureHostView+LivePrimaryInteraction.swift`: capture-host live primary interaction release
+  recovery, pointer-preview mutation, mouse-up monitor wiring, and release-watchdog orchestration.
+- `CaptureHostView+LivePreview.swift`: capture-host live preview snapshots, HUD/loupe placement,
+  live sample-cache use, and controller preview-demand updates.
+- `LiveOverlayRenderer.swift`: live overlay render orchestration for HUD, loupe, frame clock,
+  chrome transactions, and layer setup.
+- `LiveOverlayRenderer+FocusRendering.swift`: live overlay frozen display, focus scrim,
+  selection-flow, frozen-pending, drag-selection, and size-badge rendering.
+- `LiveHudColorRollCoordinator.swift`: live HUD color swatch/hex presentation, pending color roll
+  animation state, resolved hex roll transitions, and roll-layer lifecycle.
+- `LiveHudHexRollPlan.swift`: deterministic pending/resolved hex-roll digit sequences,
+  direction choices, durations, and phase offsets for live HUD color animation.
+- `LiveHudColorRollTextLayerFactory.swift`: CATextLayer construction and text application helpers
+  for live HUD color roll stacks.
+- `LiveOverlayTypography.swift`: shared native live overlay font and text metrics.
+- `LiveOverlayLayers.swift`: reusable Core Animation layer subclasses for live selection flow and
+  scrim masking.
+- `LiveChromePlacement.swift`: live HUD/loupe text metrics, pending color text, and deterministic
+  floating placement geometry shared by capture host and live chrome rendering.
+- `LiveOverlayWindowSnapshotFeed.swift`, `LiveOverlayChromeSampleFeed.swift`,
+  `LiveOverlayChromeSamplePolicy.swift`, and `LiveFrameClockDriver.swift`: native live overlay
+  support boundaries for target-window snapshots, chrome color/patch sampling and cache policy, and
+  display-rate frame ticks.
+- `FrozenToolbarLayoutPlanner.swift`: deterministic frozen-toolbar item availability, layout, and
+  hit-test geometry used by AppKit drawing, Liquid Glass toolbar content, and native probes.
+- `FrozenToolbarRenderView.swift`: shared frozen-toolbar content drawing for classic AppKit
+  toolbar rendering and Liquid Glass toolbar content.
+- `CaptureGeometry.swift`, `CaptureHostAnnotationStyleWheelGate.swift`,
+  `CaptureHostToolbarHoverState.swift`, `CaptureHostFrozenFirstDisplayHandoffState.swift`,
+  `CaptureHostScrollToolbarBackdropState.swift`, `CaptureHostCursorSupport.swift`,
+  `CaptureHostScrollMinimapRenderer.swift`, `CaptureHostLiveSampleCache.swift`,
+  `CaptureHostLiveSampleResolver.swift`, `CaptureHostLiveInputTelemetry.swift`,
+  `CaptureHostLivePointerPreviewState.swift`, `CaptureHostLivePrimaryInteractionState.swift`,
+  `CaptureHostMouseReleaseRecovery.swift`, `CaptureHostPointerDispatch.swift`,
+  `CaptureHostFrozenImageEffects.swift`, `CaptureHostGlassPatchResolver.swift`,
+  `FrozenFramePixelBufferBridge.swift`, `FrozenPreparedExportStore.swift`,
+  `LiveChromeRefreshTelemetryKey.swift`, and `NativeHostTextMetrics.swift`: focused support
+  boundaries for shared capture geometry, frozen annotation-size wheel gating, frozen toolbar hover
+  state, frozen first-display handoff state, scroll toolbar backdrop state, capture-host cursor
+  presentation and NSCursor adaptation, frozen minimap presentation, live sample reuse, live sample
+  resolution, live input telemetry, live pointer preview state, live primary interaction state,
+  AppKit mouse-release recovery, pointer dispatch queue throttling, Rust-backed frozen image
+  effects, capture-host glass patch caching and blur/tint adaptation, frozen-frame pixel-buffer
+  image/sampling adaptation, prepared export cache ownership, live-chrome telemetry identity, and
+  native text measurement.
+- `FrozenAnnotationStyles.swift`: frozen annotation colors, style toolbar state, and Swift/Rust
+  frozen overlay style conversion.
+- `FrozenCaptureModels.swift`: Swift view-adapter state for Rust-owned frozen overlay editing,
+  including conversion from Rust edit snapshots into AppKit draw models.
+- `NativeHostFeedbackSound.swift`: host-side `NSSound` lookup/playback for capture and OCR
+  completion effects.
+- `NativeHostImageBridge.swift` and `RsnapHostBridge`: conversion and FFI glue between
+  CoreGraphics/AppKit images and Rust-owned RGBA snapshots. Inside `RsnapHostBridge`,
+  `HostSessionFFI.swift` owns session protocol models and session-handle adaptation,
+  `HostFFI.swift` owns shared RGB/RGBA models plus selection-transform, auto-center, and BGRA
+  frame-sampling bridge surfaces, `ScrollCaptureFFI.swift` owns scroll minimap planning,
+  scroll-capture observation models, session-handle lifecycle, and stitched preview/export image
+  adaptation, `ExportEncoderFFI.swift` owns PNG encoding, frozen display crop, mosaic privacy patch,
+  and frozen overlay export-image adaptation, `CaptureFrameFFI.swift` owns capture-frame
+  planning/rendering and wallpaper thumbnail bridge models, `FrozenOverlayFFI.swift` owns frozen
+  overlay edit/export bridge models, and `HostFFISupport.swift` owns shared status, geometry, and
+  owned-buffer adaptation helpers.
+- `NativeHostSettingsView.swift`, `NativeHostSettingsNavigation.swift`, and
+  `NativeHostSettingsSurface.swift`: SwiftUI settings view model, shell layout, navigation, and
+  reusable settings surfaces.
+- `NativeHostAppearanceSettings.swift`, `NativeHostCaptureSettingsPanel.swift`,
+  `NativeHostOutputSettingsPanel.swift`, `NativeHostCaptureFrameSettings.swift`,
+  `PermissionsSettingsPanel.swift`, and `NativeHostAboutSettingsPanel.swift`: focused settings
+  panels for appearance, capture shortcuts/input, output location/naming, capture-frame presets,
+  permission/setup controls, and about/update controls.
+
+This means a large Swift line count can still be reasonable when those lines are AppKit,
+CoreGraphics, ScreenCaptureKit, Vision, pasteboard, save-panel, sound, update, or window lifecycle
+glue. A large Swift line count is suspicious only when it reintroduces product-state machines,
+portable geometry decisions, export byte generation, image algorithms, or duplicate planning logic
+that already has a Rust entrypoint.
+
+## Migration posture
+
+New work in the reset lane should prefer changes that:
+
+- clarify host versus core ownership
+- pull OS-facing semantics toward native hosts
+- make product semantics more explicit and portable inside Rust
+- replace legacy mixed-ownership paths with protocol boundaries
+
+New work should avoid spending the reset lane on changes that only make the old architecture more
+comfortable, such as:
+
+- preserving a split-window or split-shell ownership model as the active target
+- filing or landing cleanup that only splits files without clarifying the future boundary
+- hard-coding product behavior around a specific platform shell implementation
+
+Current reset posture for the scroll-capture slice:
+
+- the native app host owns scroll-capture permission checks, external scroll-input observer
+  lifecycle, native scroll-input normalization, and screenshot capability acquisition
+- `rsnap-capture-core` owns scroll-capture session state, overlap proof, stitching, and fail-closed
+  product semantics
+- capability start/stop, frame delivery, and host-side failures must cross the boundary as explicit
+  host/core protocol calls instead of implicit worker ownership inside a Rust UI runtime
+
+Current reset posture for the boundary slice:
+
+- durable geometry and scene protocol types now belong in `rsnap-capture-core`
+- native-host ABI entry points now belong in `rsnap-host-ffi`; its Rust ABI payload definitions are
+  grouped by owner under `src/abi/` while preserving the crate-level C ABI export surface
+- final-byte and performance-sensitive image algorithms should move behind Rust ABI entry points as
+  reusable cross-platform core work, while Swift stays limited to OS acquisition, presentation, and
+  host-side effects
+- targeted reset-slice validation now lives at `cargo make test-host-reset`
+- `apps/rsnap/` should remain a launcher/bootstrap layer instead of inventing parallel durable
+  protocol types outside the core/FFI/native-host boundary
+
+If further optimization is needed, prefer this order:
+
+1. Continue structure-only Swift splits when a file mixes app lifecycle, capture-session
+   orchestration, and AppKit rendering in a way that makes review risky.
+2. Move deterministic planners or pixel algorithms to `rsnap-capture-core` and expose them through
+   `rsnap-host-ffi` only when Swift still owns the decision or byte generation.
+3. Keep OS acquisition, AppKit presentation, Vision OCR, pasteboard/save-panel, focus, cursor,
+   permissions, and update UI in Swift unless a future platform host supplies an equivalent native
+   adapter.
+
+## Vertical-slice model
+
+The reset is intended to land as vertical slices rather than as one giant rewrite.
+
+Expected slice order:
+
+1. docs and architecture boundary
+2. native host ownership of window/input/focus on macOS
+3. live targeting plus display-first Frozen entry on the new boundary
+4. export-authority effects on the new boundary
+5. text and IME on the new boundary
+6. scroll capture on the new boundary
+7. validation and performance hardening across the new boundary
+
+## Historical material
+
+Superseded shell-era history is intentionally excluded from the active reset corpus.
+
+Plan new work from the current specs, runbooks, references, and accepted decision record instead.

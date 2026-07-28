@@ -47,7 +47,7 @@ Prototype / in active development.
 - macOS app bundle name: **Rsnap.app**.
 - Lower-case `rsnap` remains only for stable technical identifiers such as the repository slug,
   Cargo package names, crate paths, environment variables, bundle identifiers, telemetry schemas,
-  and C ABI symbols. See `docs/spec/app-identity.md`.
+  and C ABI symbols. See `openwiki/spec/app-identity.md`.
 
 ## Reset posture
 
@@ -72,13 +72,13 @@ Prototype / in active development.
   sampling uses `SCStream`.
 - Live mode is stream-first and does not capture full display on cursor movement.
 - Frozen capture imagery on macOS uses the native capture stack;
-  `docs/spec/capture-session.md` is the current contract source of truth.
+  `openwiki/spec/capture-session.md` is the current contract source of truth.
 - Menubar and Dock are not included in live window-outline targeting.
 - Windows support is planned (minimum Windows 10), but not implemented yet.
 - As of v0.2.5, the native-host release exposes Scroll Capture for dragged-region Frozen captures
   on macOS. It uses ordered ScreenCaptureKit region frames, overlay-local wheel forwarding, and
   Rust-owned fail-closed stitching. Release readiness for broader target apps is governed by
-  `docs/runbook/scroll-capture-recovery-plan.md`.
+  `openwiki/runbook/scroll-capture-recovery-plan.md`.
 
 ## Usage
 
@@ -193,7 +193,7 @@ deterministic tests, and benchmark surfaces remain the validation authority for 
 
 The implementation commits downward growth only after ordered-frame pairwise registration plus
 overlap proof, fails closed on weak registration or rewind, and forwards wheel input to target apps
-through one universal path. Follow `docs/runbook/scroll-capture-recovery-plan.md` for
+through one universal path. Follow `openwiki/runbook/scroll-capture-recovery-plan.md` for
 release-scope validation beyond the deterministic and native smoke surfaces.
 
 ## Development
@@ -244,11 +244,11 @@ runs the deterministic Rust perf sweep plus the native-host HUD-follow and visua
 
 For durable command selection, verification order, baseline workflow, and asset ownership:
 
-- `docs/runbook/performance-validation.md`
-- `docs/reference/smoke-perf-validation-surface.md`
-- `docs/runbook/release.md`
+- `openwiki/runbook/performance-validation.md`
+- `openwiki/reference/smoke-perf-validation-surface.md`
+- `openwiki/runbook/release.md`
 
-The capture-session contract lives at `docs/spec/capture-session.md`.
+The capture-session contract lives at `openwiki/spec/capture-session.md`.
 
 ## Workspace Layout
 
@@ -262,17 +262,21 @@ The tracked workspace currently keeps:
 
 Generated or local-only directories such as `target/`, `.worktrees/`, and `.workspaces/` are not
 part of the tracked repository structure. For the authoritative layout and ownership map, read
-`docs/reference/workspace-layout.md`.
+`openwiki/reference/workspace-layout.md`.
 
 ## Documentation
 
 - Product and development overview: this `README.md`
-- Unified documentation router: `docs/index.md`
-- Normative specs: `docs/spec/index.md`
-- Procedural runbooks: `docs/runbook/index.md`
-- Current implementation references: `docs/reference/index.md`
-- Durable design rationale: `docs/decisions/index.md`
-- Documentation policy and placement rules: `docs/policy.md`
+- Canonical OpenWiki router: `openwiki/quickstart.md`
+- Open Knowledge Format v0.1 bundle index: `openwiki/index.md`
+- Normative specs: `openwiki/spec/index.md`
+- Procedural runbooks: `openwiki/runbook/index.md`
+- Current implementation references: `openwiki/reference/index.md`
+- Durable design rationale: `openwiki/decisions/index.md`
+- Research provenance and drift evidence: `openwiki/research/index.md` and
+  `openwiki/evidence/index.md`
+- OpenWiki policy and placement rules: `openwiki/policy.md`
+- Repository-specific OpenWiki brief: `openwiki/INSTRUCTIONS.md`
 
 ## Support Me
 
