@@ -110,7 +110,8 @@ file name.
 - The publisher reads all bounded release and asset pages. It validates the exact remote asset
   names, states, safe sizes, canonical URLs, SHA-256 digests, and downloaded bytes.
 - Before publication, the publisher rechecks the remote annotated tag, its direct commit target,
-  reachability from `main`, every public stable release, and the exact draft ID.
+  reachability from `main`, every public stable release, and the exact draft ID. Safe reads use
+  bounded convergence when GitHub's release listing temporarily omits a new draft.
 - The last state-changing operation makes the draft public and latest. The publisher does not
   blindly retry this operation. After an unknown result, it reads the release state and validates
   public remote bytes if publication succeeded.

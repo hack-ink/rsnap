@@ -63,6 +63,8 @@ class MockTransport implements ReleaseTransport {
 	mutateAssetsAfterFinalSourceCheck = false;
 	mutateAssetsAfterPatch = false;
 	mutateReleaseAfterFinalSourceCheck = false;
+	releaseVisibleAfterListScan = 0;
+	publishedVisibleAfterListScan = 0;
 	nextAssetId = 100;
 	readonly starterAssetIds = new Set<number>();
 
@@ -157,8 +159,16 @@ class MockTransport implements ReleaseTransport {
 				this.releaseListScans += 1;
 			}
 			const releases = [...this.stableReleases];
-			if (this.release !== undefined) {
-				releases.push(this.release);
+			if (
+				this.release !== undefined &&
+				this.releaseListScans > this.releaseVisibleAfterListScan
+			) {
+				releases.push(
+					this.release.draft === false &&
+						this.releaseListScans <= this.publishedVisibleAfterListScan
+						? { ...this.release, draft: true }
+						: this.release,
+				);
 			}
 			if (this.stableRaceVersion !== undefined && this.releaseListScans >= 3) {
 				releases.push(releaseJson(false, `v${this.stableRaceVersion}`));
@@ -315,6 +325,60 @@ void test('draft lookup rejects duplicate releases with the same tag', async () 
 			transport.log.some((entry) => /^(POST|PATCH|DELETE|UPLOAD) /.test(entry)),
 			false,
 		);
+	} finally {
+		await rm(fixtureValue.root, { recursive: true, force: true });
+	}
+});
+
+void test('known draft ID survives delayed release-list visibility', async () => {
+	const fixtureValue = await fixture();
+	const transport = new MockTransport();
+	const calls: ExecRequest[] = [];
+	try {
+		transport.releaseVisibleAfterListScan = 4;
+		const result = await (await publisher(fixtureValue, transport, calls)).publish();
+		assert.equal(result, 'published');
+		assert.equal(transport.release?.draft, false);
+		assert.equal(transport.log.filter((entry) => entry.startsWith('POST ')).length, 1);
+		assert.equal(transport.log.filter((entry) => entry.startsWith('PATCH ')).length, 1);
+		assert.equal(transport.releaseListScans, 6);
+	} finally {
+		await rm(fixtureValue.root, { recursive: true, force: true });
+	}
+});
+
+void test('draft list visibility that exceeds the bound remains private', async () => {
+	const fixtureValue = await fixture();
+	const transport = new MockTransport();
+	const calls: ExecRequest[] = [];
+	try {
+		transport.releaseVisibleAfterListScan = Number.MAX_SAFE_INTEGER;
+		await assert.rejects(
+			(await publisher(fixtureValue, transport, calls)).publish(),
+			/draft release did not converge before publication/,
+		);
+		assert.equal(transport.release?.draft, true);
+		assert.equal(
+			transport.log.some((entry) => entry.startsWith('PATCH ')),
+			false,
+		);
+	} finally {
+		await rm(fixtureValue.root, { recursive: true, force: true });
+	}
+});
+
+void test('published state survives delayed release-list visibility', async () => {
+	const fixtureValue = await fixture();
+	const transport = new MockTransport();
+	const calls: ExecRequest[] = [];
+	try {
+		transport.release = releaseJson(true);
+		transport.publishedVisibleAfterListScan = 5;
+		const result = await (await publisher(fixtureValue, transport, calls)).publish();
+		assert.equal(result, 'published');
+		assert.equal(transport.release?.draft, false);
+		assert.equal(transport.log.filter((entry) => entry.startsWith('PATCH ')).length, 1);
+		assert.equal(transport.releaseListScans, 6);
 	} finally {
 		await rm(fixtureValue.root, { recursive: true, force: true });
 	}
@@ -512,7 +576,7 @@ void test('a successful PATCH is followed by exact public byte validation', asyn
 		assert.equal(
 			transport.log
 				.slice(transport.log.findIndex((entry) => entry.startsWith('PATCH ')) + 1)
-				.some((entry) => entry.includes('/releases/tags/v1.2.3')),
+				.some((entry) => entry.includes('/releases?per_page=100&page=1')),
 			true,
 		);
 	} finally {
