@@ -11,14 +11,14 @@ on:
     paths-ignore:
       - '**/*.md'
       - '.gitignore'
-      - 'docs/**'
+      - 'openwiki/**'
   pull_request:
     branches:
       - main
     paths-ignore:
       - '**/*.md'
       - '.gitignore'
-      - 'docs/**'
+      - 'openwiki/**'
   merge_group:
 
 concurrency:
