@@ -101,7 +101,10 @@ The sequence shows the tag-derived build and draft-first publication path implem
    codesign --verify --deep --strict /path/to/Rsnap.app
    ```
 
-4. Confirm that `appcast.xml` contains `sparkle:edSignature` and references the same tag and ZIP.
-5. Launch the downloaded app and repeat the minimal user-flow check from the preparation step.
+4. Confirm that `codesign -dv --verbose=4 /path/to/Rsnap.app` reports the expected Apple
+   Development authority label suffix `RD3D4LH465`, code-signing `TeamIdentifier` `T54QFA7W2S`,
+   and Hardened Runtime.
+5. Confirm that `appcast.xml` contains `sparkle:edSignature` and references the same tag and ZIP.
+6. Launch the downloaded app and repeat the minimal user-flow check from the preparation step.
    Follow the trusted Gatekeeper override in `README.md` when macOS blocks this intentionally
-   unnotarized Personal Team build.
+   unnotarized Apple Development build.

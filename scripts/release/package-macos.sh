@@ -7,7 +7,7 @@ CANONICAL_FEED_URL="https://github.com/${CANONICAL_REPOSITORY}/releases/latest/d
 ARCHIVE_NAME="rsnap-aarch64-apple-darwin.zip"
 APPCAST_NAME="appcast.xml"
 CHECKSUM_NAME="${ARCHIVE_NAME}.sha256"
-EXPECTED_APPLE_TEAM_ID="RD3D4LH465"
+EXPECTED_APPLE_IDENTITY_SUFFIX="RD3D4LH465"
 EXPECTED_SPARKLE_VERSION="2.9.4"
 PUBLIC_KEY_FILE="$ROOT_DIR/scripts/release/sparkle-public-ed-key.txt"
 
@@ -42,8 +42,8 @@ if [[ "$RSNAP_SPARKLE_VERSION" != "$EXPECTED_SPARKLE_VERSION" ]]; then
 	echo "error: release Sparkle version must be $EXPECTED_SPARKLE_VERSION" >&2
 	exit 1
 fi
-if [[ ! "$APPLE_SIGNING_IDENTITY" =~ ^Apple\ Development:\ .+\ \(${EXPECTED_APPLE_TEAM_ID}\)$ ]]; then
-	echo "error: signing identity must belong to Personal Team $EXPECTED_APPLE_TEAM_ID" >&2
+if [[ ! "$APPLE_SIGNING_IDENTITY" =~ ^Apple\ Development:\ .+\ \(${EXPECTED_APPLE_IDENTITY_SUFFIX}\)$ ]]; then
+	echo "error: signing identity must end with $EXPECTED_APPLE_IDENTITY_SUFFIX" >&2
 	exit 1
 fi
 
@@ -189,6 +189,8 @@ keychain_created=1
 	-P "$certificate_password" \
 	-T "$codesign_bin" \
 	-T "$security_bin"
+"$security_bin" list-keychains -d user -s "$keychain_path"
+"$security_bin" default-keychain -d user -s "$keychain_path"
 "$security_bin" set-key-partition-list \
 	-S apple-tool:,apple: \
 	-s \

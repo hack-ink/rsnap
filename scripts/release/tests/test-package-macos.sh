@@ -153,6 +153,11 @@ ditto_line="$(grep -n '^ditto$' "$LOG_PATH" | cut -d: -f1)"
 appcast_line="$(grep -n '^appcast$' "$LOG_PATH" | cut -d: -f1)"
 [[ "$build_line" -lt "$base64_line" ]]
 [[ "$sign_line" -lt "$ditto_line" && "$ditto_line" -lt "$appcast_line" ]]
+list_keychains_line="$(grep -n '^security:list-keychains$' "$LOG_PATH" | cut -d: -f1)"
+default_keychain_line="$(grep -n '^security:default-keychain$' "$LOG_PATH" | cut -d: -f1)"
+partition_list_line="$(grep -n '^security:set-key-partition-list$' "$LOG_PATH" | cut -d: -f1)"
+[[ "$list_keychains_line" -lt "$default_keychain_line" ]]
+[[ "$default_keychain_line" -lt "$partition_list_line" ]]
 
 : >"$LOG_PATH"
 release_environment

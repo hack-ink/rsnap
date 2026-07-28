@@ -114,6 +114,9 @@ Current preview release builds are signed, but are not notarized by Apple. If ma
 confirm `Open` when macOS asks. Do this only for a bundle that you built or downloaded from this
 repository's GitHub Releases page.
 
+The release uses an Apple Development certificate whose authority label ends with `RD3D4LH465`.
+Signed code reports the code-signing `TeamIdentifier` `T54QFA7W2S` and uses Hardened Runtime.
+
 If `Open Anyway` is not available, move the trusted app to `/Applications`, then use this terminal
 fallback:
 
