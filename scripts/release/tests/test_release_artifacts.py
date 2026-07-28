@@ -70,6 +70,7 @@ class ReleaseFixture:
         *,
         feed_url: str = VALIDATOR.SPARKLE_FEED_URL,
         extra_entry: str | None = None,
+        extra_sparkle_entry: str | None = None,
     ) -> None:
         info = {
             "CFBundleName": "Rsnap",
@@ -89,10 +90,41 @@ class ReleaseFixture:
                 "Rsnap.app/Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle",
                 b"test framework",
             )
+            sparkle_root = (
+                "Rsnap.app/Contents/Frameworks/Sparkle.framework/Versions/B"
+            )
+            archive.writestr(
+                f"{sparkle_root}/Resources/Info.plist",
+                plistlib.dumps(
+                    {
+                        "CFBundleIdentifier": "org.sparkle-project.Sparkle",
+                        "CFBundleShortVersionString": "2.9.4",
+                    }
+                ),
+            )
+            for component in (
+                "XPCServices/Installer.xpc/Contents/MacOS/Installer",
+                "XPCServices/Downloader.xpc/Contents/MacOS/Downloader",
+                "Autoupdate",
+                "Updater.app/Contents/MacOS/Updater",
+            ):
+                archive.writestr(f"{sparkle_root}/{component}", b"test code")
+            current = zipfile.ZipInfo(
+                "Rsnap.app/Contents/Frameworks/Sparkle.framework/Versions/Current"
+            )
+            current.create_system = 3
+            current.external_attr = (0o120777 << 16)
+            archive.writestr(current, b"B")
             archive.writestr(
                 "Rsnap.app/Contents/MacOS/RsnapNativeHost",
                 b"test executable",
             )
+            if extra_sparkle_entry is not None:
+                archive.writestr(
+                    "Rsnap.app/Contents/Frameworks/Sparkle.framework/Versions/"
+                    f"{extra_sparkle_entry}",
+                    b"unexpected",
+                )
             if extra_entry is not None:
                 archive.writestr(extra_entry, b"unexpected")
 
@@ -178,6 +210,7 @@ class ReleaseFixture:
             "tag": self.tag,
             "repository": VALIDATOR.CANONICAL_REPOSITORY,
             "public_key_b64": self.public_key_b64,
+            "sparkle_version": "2.9.4",
         }
         arguments.update(overrides)
         VALIDATOR.validate_artifacts(**arguments)
@@ -203,12 +236,30 @@ class ReleaseArtifactTests(unittest.TestCase):
         with self.assertRaisesRegex(VALIDATOR.ValidationError, "second payload root"):
             fixture.validate()
 
+    def test_rejects_archive_entry_count_over_bound(self) -> None:
+        fixture = ReleaseFixture(self.root)
+        original_bound = VALIDATOR.MAX_ARCHIVE_ENTRIES
+        try:
+            VALIDATOR.MAX_ARCHIVE_ENTRIES = 2
+            with self.assertRaisesRegex(VALIDATOR.ValidationError, "too many entries"):
+                fixture.validate()
+        finally:
+            VALIDATOR.MAX_ARCHIVE_ENTRIES = original_bound
+
     def test_rejects_noncanonical_feed_url(self) -> None:
         fixture = ReleaseFixture(self.root)
         fixture.write_archive(feed_url="https://example.invalid/appcast.xml")
         fixture.write_appcast()
         fixture.write_checksum()
         with self.assertRaisesRegex(VALIDATOR.ValidationError, "SUFeedURL"):
+            fixture.validate()
+
+    def test_rejects_extra_sparkle_versions_entry(self) -> None:
+        fixture = ReleaseFixture(self.root)
+        fixture.write_archive(extra_sparkle_entry="A/ignored")
+        fixture.write_appcast()
+        fixture.write_checksum()
+        with self.assertRaisesRegex(VALIDATOR.ValidationError, "contain only Current"):
             fixture.validate()
 
     def test_rejects_invalid_signature(self) -> None:

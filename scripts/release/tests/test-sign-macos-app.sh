@@ -20,6 +20,17 @@ set -euo pipefail
 	done
 	printf '\n'
 } >>"$CODESIGN_LOG"
+
+if [[ " $* " == *" -dv "* ]]; then
+	cat >&2 <<'DETAILS'
+CodeDirectory v=20500 size=1 flags=0x10000(runtime) hashes=1+0 location=embedded
+Authority=Apple Development: Test (RD3D4LH465)
+TeamIdentifier=RD3D4LH465
+DETAILS
+fi
+if [[ " $* " == *" --entitlements :- "* ]]; then
+	printf '%s\n' '<plist><dict/></plist>'
+fi
 SH
 chmod +x "$FAKE_CODESIGN"
 
@@ -33,6 +44,7 @@ make_fixture() {
 		"$framework/Versions/B/XPCServices/Downloader.xpc" \
 		"$framework/Versions/B/Updater.app"
 	touch "$framework/Versions/B/Autoupdate"
+	chmod +x "$framework/Versions/B/Autoupdate"
 	ln -s B "$framework/Versions/Current"
 	printf '%s\n' "$app"
 }
@@ -60,20 +72,21 @@ CODESIGN_BIN="$FAKE_CODESIGN" "$SIGNER" \
 	--app "$app" \
 	--identity "Apple Development: Test" \
 	--keychain "$keychain" \
-	--entitlements "$app_entitlements"
+	--entitlements "$app_entitlements" \
+	--mode development
 
-if [[ "$(wc -l <"$CODESIGN_LOG" | tr -d ' ')" != "7" ]]; then
-	echo "expected six signing calls and one verification call" >&2
+if [[ "$(wc -l <"$CODESIGN_LOG" | tr -d ' ')" != "13" ]]; then
+	echo "expected six signing calls, six strict checks, and one deep verification" >&2
 	exit 1
 fi
 
 installer_line="$(sed -n '1p' "$CODESIGN_LOG")"
-downloader_line="$(sed -n '2p' "$CODESIGN_LOG")"
-autoupdate_line="$(sed -n '3p' "$CODESIGN_LOG")"
-updater_line="$(sed -n '4p' "$CODESIGN_LOG")"
-framework_line="$(sed -n '5p' "$CODESIGN_LOG")"
-app_line="$(sed -n '6p' "$CODESIGN_LOG")"
-verify_line="$(sed -n '7p' "$CODESIGN_LOG")"
+downloader_line="$(sed -n '3p' "$CODESIGN_LOG")"
+autoupdate_line="$(sed -n '5p' "$CODESIGN_LOG")"
+updater_line="$(sed -n '7p' "$CODESIGN_LOG")"
+framework_line="$(sed -n '9p' "$CODESIGN_LOG")"
+app_line="$(sed -n '11p' "$CODESIGN_LOG")"
+verify_line="$(sed -n '13p' "$CODESIGN_LOG")"
 
 assert_contains "$installer_line" "Installer.xpc"
 assert_contains "$downloader_line" "Downloader.xpc"
@@ -93,7 +106,18 @@ while IFS= read -r signing_line; do
 		echo "signing call must not use --deep: $signing_line" >&2
 		exit 1
 	fi
-done < <(sed -n '1,6p' "$CODESIGN_LOG")
+done < <(sed -n '1p;3p;5p;7p;9p;11p' "$CODESIGN_LOG")
+
+: >"$CODESIGN_LOG"
+CODESIGN_BIN="$FAKE_CODESIGN" "$SIGNER" \
+	--app "$app" \
+	--identity "Apple Development: Test (RD3D4LH465)" \
+	--keychain "$keychain" \
+	--mode release
+if ! grep -q -- "-dv --verbose=4" "$CODESIGN_LOG"; then
+	echo "release signer did not read back signed object details" >&2
+	exit 1
+fi
 
 unsupported_app="$(make_fixture "$TEST_ROOT/unsupported")"
 : >"$CODESIGN_LOG"
@@ -108,6 +132,31 @@ if [[ -s "$CODESIGN_LOG" ]]; then
 	exit 1
 fi
 
+wrong_team_app="$(make_fixture "$TEST_ROOT/wrong-team")"
+: >"$CODESIGN_LOG"
+if CODESIGN_BIN="$FAKE_CODESIGN" "$SIGNER" \
+	--app "$wrong_team_app" \
+	--identity "Apple Development: Test (OTHERTEAM1)" \
+	--keychain "$keychain" >/dev/null 2>&1; then
+	echo "signer accepted an unexpected Personal Team" >&2
+	exit 1
+fi
+if [[ -s "$CODESIGN_LOG" ]]; then
+	echo "signer called codesign before rejecting an unexpected team" >&2
+	exit 1
+fi
+unsafe_target_app="$(make_fixture "$TEST_ROOT/unsafe-target")"
+rm "$unsafe_target_app/Contents/Frameworks/Sparkle.framework/Versions/Current"
+ln -s $'B\nhidden' "$unsafe_target_app/Contents/Frameworks/Sparkle.framework/Versions/Current"
+: >"$CODESIGN_LOG"
+if CODESIGN_BIN="$FAKE_CODESIGN" "$SIGNER" \
+	--app "$unsafe_target_app" \
+	--identity "Apple Development: Test" \
+	--mode development >/dev/null 2>&1; then
+	echo "signer accepted a control character in Versions/Current" >&2
+	exit 1
+fi
+
 outside="$TEST_ROOT/outside"
 mkdir -p "$outside"
 escaped_app="$(make_fixture "$TEST_ROOT/escaped")"
@@ -116,7 +165,8 @@ ln -s "$outside" "$escaped_app/Contents/Frameworks/Sparkle.framework/Versions/Cu
 : >"$CODESIGN_LOG"
 if CODESIGN_BIN="$FAKE_CODESIGN" "$SIGNER" \
 	--app "$escaped_app" \
-	--identity "Apple Development: Test" >/dev/null 2>&1; then
+	--identity "Apple Development: Test" \
+	--mode development >/dev/null 2>&1; then
 	echo "signer accepted a Versions/Current symlink outside Sparkle.framework" >&2
 	exit 1
 fi
@@ -125,12 +175,43 @@ if [[ -s "$CODESIGN_LOG" ]]; then
 	exit 1
 fi
 
+extra_alias_app="$(make_fixture "$TEST_ROOT/extra-alias")"
+ln -s B "$extra_alias_app/Contents/Frameworks/Sparkle.framework/Versions/Previous"
+: >"$CODESIGN_LOG"
+if CODESIGN_BIN="$FAKE_CODESIGN" "$SIGNER" \
+	--app "$extra_alias_app" \
+	--identity "Apple Development: Test" \
+	--mode development >/dev/null 2>&1; then
+	echo "signer accepted an extra Sparkle Versions alias" >&2
+	exit 1
+fi
+if [[ -s "$CODESIGN_LOG" ]]; then
+	echo "signer called codesign before rejecting an extra Versions alias" >&2
+	exit 1
+fi
+
+unknown_app="$(make_fixture "$TEST_ROOT/unknown")"
+mkdir -p \
+	"$unknown_app/Contents/Frameworks/Sparkle.framework/Versions/B/Unexpected.app"
+: >"$CODESIGN_LOG"
+if CODESIGN_BIN="$FAKE_CODESIGN" "$SIGNER" \
+	--app "$unknown_app" \
+	--identity "Apple Development: Test" \
+	--mode development >/dev/null 2>&1; then
+	echo "signer accepted an unknown nested code bundle" >&2
+	exit 1
+fi
+if [[ -s "$CODESIGN_LOG" ]]; then
+	echo "signer called codesign before rejecting an unknown graph" >&2
+	exit 1
+fi
 incomplete_app="$(make_fixture "$TEST_ROOT/incomplete")"
 rm -rf "$incomplete_app/Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app"
 : >"$CODESIGN_LOG"
 if CODESIGN_BIN="$FAKE_CODESIGN" "$SIGNER" \
 	--app "$incomplete_app" \
-	--identity "Apple Development: Test" >/dev/null 2>&1; then
+	--identity "Apple Development: Test" \
+	--mode development >/dev/null 2>&1; then
 	echo "signer accepted a Sparkle framework with a missing nested component" >&2
 	exit 1
 fi

@@ -102,7 +102,7 @@ size="$(wc -c <"$file" | tr -d ' ')"
 printf 'sparkle:edSignature="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==" length="%s"\n' "$size"
 SH
 	chmod +x "$fake_sign_update"
-	SPARKLE_PRIVATE_ED_KEY="fake-private-key" \
+	RSNAP_SPARKLE_PRIVATE_ED_KEY="fake-private-key" \
 		SPARKLE_SIGN_UPDATE="$fake_sign_update" \
 		SPARKLE_ARCHIVE_URL="http://127.0.0.1:9/$ARCHIVE_NAME" \
 		SPARKLE_RELEASE_NOTES_URL="http://127.0.0.1:9/release-notes.html" \
@@ -143,7 +143,7 @@ ARCHIVE_URL="http://$HOST:$PORT/$ARCHIVE_NAME"
 RELEASE_NOTES_URL="http://$HOST:$PORT/release-notes.html"
 
 sparkle_key_output="$(generate_test_keys)"
-SPARKLE_PRIVATE_ED_KEY="$(printf '%s\n' "$sparkle_key_output" | sed -n '1p')"
+RSNAP_SPARKLE_PRIVATE_ED_KEY="$(printf '%s\n' "$sparkle_key_output" | sed -n '1p')"
 SPARKLE_PUBLIC_ED_KEY="$(printf '%s\n' "$sparkle_key_output" | sed -n '2p')"
 
 rm -rf "$WORK_ROOT"
@@ -166,7 +166,7 @@ ditto -c -k --sequesterRsrc --keepParent \
 	"$NEW_STAGE_DIR/Rsnap.app" \
 	"$SERVER_DIR/$ARCHIVE_NAME"
 
-SPARKLE_PRIVATE_ED_KEY="$SPARKLE_PRIVATE_ED_KEY" \
+RSNAP_SPARKLE_PRIVATE_ED_KEY="$RSNAP_SPARKLE_PRIVATE_ED_KEY" \
 	SPARKLE_ARCHIVE_URL="$ARCHIVE_URL" \
 	SPARKLE_RELEASE_NOTES_URL="$RELEASE_NOTES_URL" \
 	"$ROOT_DIR/scripts/release/sparkle-appcast.py" \

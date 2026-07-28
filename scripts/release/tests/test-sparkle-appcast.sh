@@ -37,7 +37,7 @@ valid_output="sparkle:edSignature=\"$signature\" length=\"9\""
 
 run_appcast() {
 	FAKE_SIGNATURE_OUTPUT="$1" \
-	SPARKLE_PRIVATE_ED_KEY="fake-private-key" \
+	RSNAP_SPARKLE_PRIVATE_ED_KEY="fake-private-key" \
 	SPARKLE_SIGN_UPDATE="$FAKE_SIGN_UPDATE" \
 	SPARKLE_ARCHIVE_URL="${2:-}" \
 	SPARKLE_RELEASE_NOTES_URL="${3:-}" \
@@ -104,8 +104,26 @@ assert_failure_preserves_appcast \
 	"non-canonical archive URL" \
 	run_appcast "$valid_output" "https://example.com/update.zip"
 
+printf 'sentinel' >"$APPCAST"
 if FAKE_SIGNATURE_OUTPUT="$valid_output" \
-	SPARKLE_PRIVATE_ED_KEY="fake-private-key" \
+	RSNAP_SPARKLE_PRIVATE_ED_KEY="fake-private-key" \
+	SPARKLE_PRIVATE_ED_KEY="forbidden-generic-key" \
+	SPARKLE_SIGN_UPDATE="$FAKE_SIGN_UPDATE" \
+		"$APPCAST_TOOL" \
+		--archive "$ARCHIVE" \
+		--appcast "$APPCAST" \
+		--version "1.2.3" \
+		--tag "v1.2.3" >/dev/null 2>&1; then
+	echo "appcast generator accepted the generic Sparkle key variable" >&2
+	exit 1
+fi
+if [[ "$(cat "$APPCAST")" != "sentinel" ]]; then
+	echo "generic key rejection replaced the existing appcast" >&2
+	exit 1
+fi
+
+if FAKE_SIGNATURE_OUTPUT="$valid_output" \
+	RSNAP_SPARKLE_PRIVATE_ED_KEY="fake-private-key" \
 	SPARKLE_SIGN_UPDATE="$FAKE_SIGN_UPDATE" \
 		"$APPCAST_TOOL" \
 		--archive "$ARCHIVE" \

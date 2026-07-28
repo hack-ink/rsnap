@@ -31,6 +31,8 @@ passes a minimal launch, update, capture, copy, and save check.
 2. Run the repository gates:
 
    ```sh
+   npm ci --ignore-scripts
+   npm run check
    cargo make checks
    cargo make test-host-reset
    cargo make test-macos-native-host-stage
@@ -72,12 +74,14 @@ The sequence shows the tag-derived build and draft-first publication path implem
    ```
 
 2. In the single `Release` workflow, wait for `Check source` and
-   `Build macOS release` to succeed.
+   `Build macOS release` to succeed. The macOS job runs credential-free tests and the unsigned
+   build before it writes the Apple certificate or Sparkle private key to a tool.
 3. Approve the `release` environment. The publisher keeps the release as a draft until the exact
    ZIP, appcast, and checksum bytes pass remote verification.
-4. For a transient service failure, rerun the unchanged workflow. For a source or build defect, fix
-   `main` and release a new version. Never move or overwrite a published tag, and never manually
-   publish a failed draft.
+4. For a transient service failure, rerun the unchanged workflow. A rerun validates an already
+   public same-tag release without changing it. For a source or build defect, fix `main` and release
+   a new version. Never move or overwrite a published tag, and never manually publish a failed
+   draft.
 
 ## Verify
 

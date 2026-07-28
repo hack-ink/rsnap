@@ -7,6 +7,7 @@
 # | check-rust         | command   |     |
 # | check-swift        | composite |     |
 # | check-swiftlint    | command   |     |
+# | check-typescript   | command   |     |
 # | check-vstyle       | composite |     |
 # | check-vstyle-rust  | command   |     |
 # | check-vstyle-swift | command   |     |
@@ -16,11 +17,17 @@ clear = true
 workspace = false
 dependencies = [
 	"fmt-check",
+	"check-typescript",
 	"check-rust",
 	"check-swift",
 	"check-vstyle",
 	"test",
 ]
+
+[tasks.check-typescript]
+workspace = false
+command = "npm"
+args = ["run", "typecheck"]
 
 [tasks.check-rust]
 workspace = false
@@ -115,6 +122,8 @@ args = [
 # | fmt-swift-check | command   |     |
 # | fmt-toml        | command   |     |
 # | fmt-toml-check  | extend    |     |
+# | fmt-typescript  | command   |     |
+# | fmt-typescript-check | command |   |
 
 [tasks.fmt]
 workspace = false
@@ -122,6 +131,7 @@ dependencies = [
 	"fmt-rust",
 	"fmt-swift",
 	"fmt-toml",
+	"fmt-typescript",
 ]
 
 [tasks.fmt-check]
@@ -130,6 +140,7 @@ dependencies = [
 	"fmt-rust-check",
 	"fmt-swift-check",
 	"fmt-toml-check",
+	"fmt-typescript-check",
 ]
 
 [tasks.fmt-rust]
@@ -192,6 +203,16 @@ args = [
 	"--check",
 ]
 
+[tasks.fmt-typescript]
+workspace = false
+command = "npm"
+args = ["run", "format"]
+
+[tasks.fmt-typescript-check]
+workspace = false
+command = "npm"
+args = ["run", "format:check"]
+
 # Lint
 # | task           | type      | cwd |
 # | -------------- | --------- | --- |
@@ -199,6 +220,7 @@ args = [
 # | lint-rust      | command   |     |
 # | lint-swift     | composite |     |
 # | lint-swiftlint | command   |     |
+# | lint-typescript | command  |     |
 # | lint-vstyle    | composite |     |
 
 [tasks.lint]
@@ -207,7 +229,13 @@ dependencies = [
 	"lint-rust",
 	"lint-swift",
 	"lint-vstyle",
+	"lint-typescript",
 ]
+
+[tasks.lint-typescript]
+workspace = false
+command = "npm"
+args = ["run", "lint"]
 
 [tasks.lint-rust]
 workspace = false
@@ -308,6 +336,7 @@ args = [
 # | test-macos-native-host-stage | command   |     |
 # | test-macos-release           | script    |     |
 # | test-release                 | script    |     |
+# | test-typescript              | command   |     |
 
 [tasks.test]
 clear = true
@@ -316,6 +345,7 @@ dependencies = [
 	"test-release",
 	"test-rust",
 	"test-swift",
+	"test-typescript",
 ]
 
 [tasks.test-release]
@@ -328,6 +358,11 @@ for test_script in scripts/release/tests/test-*.sh; do
   "$test_script"
 done
 '''
+
+[tasks.test-typescript]
+workspace = false
+command = "npm"
+args = ["test"]
 
 [tasks.test-rust]
 workspace = false
