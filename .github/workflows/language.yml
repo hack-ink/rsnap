@@ -26,6 +26,50 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  typescript-check:
+    name: TypeScript check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch latest code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up exact Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+
+      - name: Set up exact npm and dependencies
+        run: |
+          expected_node_version="$(cat .node-version)"
+          cd "$RUNNER_TEMP"
+          npm install --global npm@11.16.0 --ignore-scripts --no-audit --no-fund
+          hash -r
+          test "$(node --version)" = "v$expected_node_version"
+          test "$(npm --version)" = "11.16.0"
+          cd "$GITHUB_WORKSPACE"
+          npm ci --ignore-scripts
+
+      - name: Check TypeScript format
+        run: npm run format:check
+
+      - name: Type-check TypeScript release tools
+        run: npm run typecheck
+
+      - name: Lint TypeScript release tools
+        run: npm run lint
+
+      - name: Test TypeScript release tools
+        run: npm test
+
+      - name: Install cargo-make
+        uses: taiki-e/install-action@50414676f9f5d50a65992c6dd2ed02641263226c # v2.82.10
+        with:
+          tool: cargo-make
+
+      - name: Run release workflow self-check
+        run: cargo make test-release
+
   rust-check:
     name: Rust check
     runs-on: ubuntu-latest
@@ -126,8 +170,8 @@ jobs:
       - name: Run Swift tests
         run: cargo make test-swift
 
-      - name: Run release workflow self-check
-        run: cargo make test-release
+      - name: Test Sparkle key verification
+        run: scripts/release/tests/test-verify-sparkle-key.sh
 
   toml-check:
     name: TOML check

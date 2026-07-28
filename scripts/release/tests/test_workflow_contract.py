@@ -21,8 +21,15 @@ class WorkflowContractTests(unittest.TestCase):
 			"rust-check:",
 			"swift-check:",
 			"toml-check:",
+			"typescript-check:",
 			"runs-on: macos-26",
 			"cargo make test-release",
+			"scripts/release/tests/test-verify-sparkle-key.sh",
+			"npm ci --ignore-scripts",
+			"npm run format:check",
+			"npm run typecheck",
+			"npm run lint",
+			"npm test",
 		):
 			self.assertIn(required, workflow)
 
@@ -52,6 +59,14 @@ class WorkflowContractTests(unittest.TestCase):
 		self.assertNotIn("APPLE_NOTARY_", workflow)
 		self.assertNotIn("notarytool", workflow)
 		self.assertIn("retention-days: 7", workflow)
+		self.assertIn("scripts/release/package-macos.sh", workflow)
+		self.assertEqual(
+			workflow.count("node scripts/release/validate-release-source.ts"),
+			3,
+		)
+		self.assertIn("node scripts/release/publish-github-release.ts", workflow)
+		self.assertNotIn("publish-github-release.py", workflow)
+		self.assertIn("concurrency:\n  group: release\n  cancel-in-progress: false", workflow)
 
 	def test_canonical_repository_has_no_stale_owner_reference(self) -> None:
 		result = subprocess.run(

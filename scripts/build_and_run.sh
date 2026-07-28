@@ -352,6 +352,10 @@ resolve_signing_identity() {
 	local security_args
 
 	requested_identity="${RSNAP_NATIVE_HOST_SIGN_IDENTITY:-$DEFAULT_SIGN_IDENTITY}"
+	if [[ "$requested_identity" == "-" ]]; then
+		RESOLVED_SIGN_IDENTITY="-"
+		return 0
+	fi
 	security_args=(find-identity -v -p codesigning)
 	if [[ -n "${RSNAP_NATIVE_HOST_SIGN_KEYCHAIN:-}" ]]; then
 		security_args+=("$RSNAP_NATIVE_HOST_SIGN_KEYCHAIN")
@@ -391,6 +395,7 @@ sign_staged_app_bundle() {
 		signer_args=(
 			--app "$APP_BUNDLE"
 			--identity "$RESOLVED_SIGN_IDENTITY"
+			--mode development
 		)
 		if [[ -n "${RSNAP_NATIVE_HOST_SIGN_KEYCHAIN:-}" ]]; then
 			signer_args+=(--keychain "$RSNAP_NATIVE_HOST_SIGN_KEYCHAIN")
@@ -523,13 +528,24 @@ else
 	if [[ "${RSNAP_NATIVE_HOST_SWIFT_CLEAN:-0}" == "1" ]]; then
 		swift package --package-path "$PACKAGE_DIR" clean
 	fi
-	BUILD_ROOT="$(RSNAP_HOST_FFI_LIB_DIR="$RUST_LIB_DIR" swift build --package-path "$PACKAGE_DIR" "${SWIFT_BUILD_FLAGS[@]}" --show-bin-path)"
+	BUILD_ROOT="$(
+		RSNAP_HOST_FFI_LIB_DIR="$RUST_LIB_DIR" \
+			swift build \
+			--package-path "$PACKAGE_DIR" \
+			--disable-automatic-resolution \
+			"${SWIFT_BUILD_FLAGS[@]}" \
+			--show-bin-path
+	)"
 	BUILD_BINARY="$BUILD_ROOT/$EXECUTABLE_NAME"
 	# SwiftPM does not track the external Rust static library as a product input. Remove the
 	# executable before building so Rust host-FFI changes are always relinked into the app bundle.
 	rm -f "$BUILD_BINARY"
 	RSNAP_HOST_FFI_LIB_DIR="$RUST_LIB_DIR" \
-		swift build --package-path "$PACKAGE_DIR" "${SWIFT_BUILD_FLAGS[@]}" --product "$EXECUTABLE_NAME"
+		swift build \
+		--package-path "$PACKAGE_DIR" \
+		--disable-automatic-resolution \
+		"${SWIFT_BUILD_FLAGS[@]}" \
+		--product "$EXECUTABLE_NAME"
 
 	if [[ ! -x "$BUILD_BINARY" ]]; then
 		relink_native_host_if_missing

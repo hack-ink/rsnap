@@ -11,6 +11,7 @@ import pathlib
 import plistlib
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -33,6 +34,23 @@ SPARKLE_PUBLIC_ED_KEY = (
 SPARKLE_NAMESPACE = "http://www.andymatuschak.org/xml-namespaces/sparkle"
 SEMVER_PATTERN = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
 MAX_METADATA_BYTES = 4 * 1024 * 1024
+MAX_ARCHIVE_ENTRIES = 50_000
+MAX_ARCHIVE_UNCOMPRESSED_BYTES = 2 * 1024 * 1024 * 1024
+MAX_ARCHIVE_ENTRY_BYTES = 512 * 1024 * 1024
+MAX_ARCHIVE_PATH_BYTES = 4_096
+MAX_ZIP_ENTRY_METADATA_BYTES = 64 * 1024
+MAX_SYMLINK_TARGET_BYTES = 255
+SPARKLE_COMPONENTS = (
+    "XPCServices/Installer.xpc",
+    "XPCServices/Downloader.xpc",
+    "Autoupdate",
+    "Updater.app",
+)
+SPARKLE_CODE_BUNDLES = {
+    "XPCServices/Installer.xpc",
+    "XPCServices/Downloader.xpc",
+    "Updater.app",
+}
 
 
 class ValidationError(ValueError):
@@ -71,24 +89,273 @@ def validate_identity(
         )
 
 
+def validate_app_info(
+    info: object,
+    version: str,
+    public_key_b64: str,
+) -> None:
+    """Validate the public identity in one app Info.plist."""
+    require(isinstance(info, dict), "Info.plist root must be a dictionary")
+    expected_values = {
+        "CFBundleName": "Rsnap",
+        "CFBundleDisplayName": "Rsnap",
+        "CFBundleIdentifier": BUNDLE_IDENTIFIER,
+        "CFBundleShortVersionString": version,
+        "CFBundleVersion": version,
+        "SUFeedURL": SPARKLE_FEED_URL,
+        "SUPublicEDKey": public_key_b64,
+    }
+    for key, expected in expected_values.items():
+        require(
+            info.get(key) == expected,
+            f"Info.plist {key} must be {expected!r}",
+        )
+
+
+def validate_sparkle_info(info: object, sparkle_version: str) -> None:
+    """Validate the embedded Sparkle framework identity and version."""
+    require(isinstance(info, dict), "Sparkle Info.plist root must be a dictionary")
+    require(
+        info.get("CFBundleIdentifier") == "org.sparkle-project.Sparkle",
+        "embedded framework is not org.sparkle-project.Sparkle",
+    )
+    actual_version = info.get("CFBundleShortVersionString")
+    require(
+        actual_version == sparkle_version,
+        f"embedded Sparkle version {actual_version!r} does not match {sparkle_version}",
+    )
+
+
+def resolve_sparkle_layout(app: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path]:
+    """Resolve a dynamic, direct-child Sparkle Versions/Current layout."""
+    framework = app / "Contents/Frameworks/Sparkle.framework"
+    versions = framework / "Versions"
+    current = versions / "Current"
+    require(framework.is_dir() and versions.is_dir(), "Sparkle.framework layout is missing")
+    require(current.is_symlink(), "Sparkle Versions/Current must be a symbolic link")
+    try:
+        versions_real = versions.resolve(strict=True)
+        current_real = current.resolve(strict=True)
+    except OSError as error:
+        raise ValidationError(f"cannot resolve Sparkle Versions/Current: {error}") from error
+    require(
+        current_real.parent == versions_real and current_real.is_dir(),
+        "Sparkle Versions/Current must resolve to a direct Versions child",
+    )
+    require(
+        re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", current_real.name) is not None,
+        "Sparkle version directory name is unsafe",
+    )
+    version_entries = list(versions.iterdir())
+    require(
+        {entry.name for entry in version_entries} == {"Current", current_real.name},
+        "Sparkle Versions must contain only Current and its version directory",
+    )
+    version_directories = [
+        entry.resolve(strict=True)
+        for entry in version_entries
+        if entry.name != "Current" and entry.is_dir() and not entry.is_symlink()
+    ]
+    require(
+        version_directories == [current_real],
+        "Sparkle Versions must contain exactly the Current version directory",
+    )
+    require(
+        current.readlink().as_posix() == current_real.name,
+        "Sparkle Versions/Current must use a safe single-segment target",
+    )
+    return framework, current_real
+
+
+def validate_sparkle_graph(app: pathlib.Path, sparkle_version: str) -> None:
+    """Validate the known Sparkle 2.9.4 code graph without hard-coding its version letter."""
+    framework, version_root = resolve_sparkle_layout(app)
+    for relative_path in SPARKLE_COMPONENTS:
+        require(
+            (version_root / relative_path).exists(),
+            f"embedded Sparkle code is missing: {relative_path}",
+        )
+    autoupdate = version_root / "Autoupdate"
+    require(
+        autoupdate.is_file() and bool(autoupdate.stat().st_mode & stat.S_IXUSR),
+        "Sparkle Autoupdate must be an executable file",
+    )
+    discovered_bundles = {
+        path.relative_to(version_root).as_posix()
+        for path in version_root.rglob("*")
+        if path.is_dir() and path.suffix in {".app", ".xpc", ".framework"}
+    }
+    require(
+        discovered_bundles == SPARKLE_CODE_BUNDLES,
+        "Sparkle framework contains an unknown nested code bundle",
+    )
+    try:
+        with (version_root / "Resources/Info.plist").open("rb") as stream:
+            sparkle_info = plistlib.load(stream)
+    except (OSError, plistlib.InvalidFileException) as error:
+        raise ValidationError(f"cannot read embedded Sparkle Info.plist: {error}") from error
+    validate_sparkle_info(sparkle_info, sparkle_version)
+    require(framework.is_dir(), "Sparkle.framework is missing")
+
+
+def validate_app(
+    app: pathlib.Path,
+    version: str,
+    sparkle_version: str,
+    public_key_b64: str,
+) -> None:
+    """Validate one staged app before release signing."""
+    require(app.is_dir() and app.name == APP_BUNDLE_NAME, f"app must be {APP_BUNDLE_NAME}")
+    try:
+        with (app / "Contents/Info.plist").open("rb") as stream:
+            info = plistlib.load(stream)
+    except (OSError, plistlib.InvalidFileException) as error:
+        raise ValidationError(f"cannot read app Info.plist: {error}") from error
+    validate_app_info(info, version, public_key_b64)
+    validate_sparkle_graph(app, sparkle_version)
+
+
+def validate_archive_sparkle_graph(
+    bundle_zip: zipfile.ZipFile,
+    names: set[str],
+    sparkle_version: str,
+) -> None:
+    """Validate the dynamic Sparkle code graph in an unextracted release ZIP."""
+    versions_prefix = (
+        f"{APP_BUNDLE_NAME}/Contents/Frameworks/Sparkle.framework/Versions/"
+    )
+    info_matches = [
+        name
+        for name in names
+        if re.fullmatch(
+            re.escape(versions_prefix) + r"([^/]+)/Resources/Info\.plist",
+            name,
+        )
+    ]
+    require(
+        len(info_matches) == 1,
+        "release archive must contain exactly one Sparkle version directory",
+    )
+    info_name = info_matches[0]
+    version_name = pathlib.PurePosixPath(info_name).parts[-3]
+    require(
+        re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", version_name) is not None
+        and version_name != "Current",
+        "release archive has an invalid Sparkle version directory",
+    )
+    version_prefix = f"{versions_prefix}{version_name}/"
+    direct_children = {
+        remainder.split("/", maxsplit=1)[0]
+        for name in names
+        if name.startswith(versions_prefix)
+        for remainder in [name.removeprefix(versions_prefix).rstrip("/")]
+        if remainder
+    }
+    require(
+        direct_children == {"Current", version_name},
+        "release archive Sparkle Versions must contain only Current and its version directory",
+    )
+    for relative_path in SPARKLE_COMPONENTS:
+        require(
+            any(
+                name == f"{version_prefix}{relative_path}"
+                or name.startswith(f"{version_prefix}{relative_path}/")
+                for name in names
+            ),
+            f"release archive is missing Sparkle code: {relative_path}",
+        )
+
+    discovered_bundles: set[str] = set()
+    for name in names:
+        if not name.startswith(version_prefix):
+            continue
+        relative_parts = pathlib.PurePosixPath(name.removeprefix(version_prefix)).parts
+        for index, part in enumerate(relative_parts):
+            if part.endswith((".app", ".xpc", ".framework")):
+                discovered_bundles.add("/".join(relative_parts[: index + 1]))
+                break
+    require(
+        discovered_bundles == SPARKLE_CODE_BUNDLES,
+        "release archive contains an unknown Sparkle code bundle",
+    )
+
+    current_name = f"{versions_prefix}Current"
+    require(current_name in names, "release archive is missing Sparkle Versions/Current")
+    current_entry = bundle_zip.getinfo(current_name)
+    require(
+        stat.S_ISLNK(current_entry.external_attr >> 16),
+        "Sparkle Versions/Current in the release archive must be a symlink",
+    )
+    require(
+        current_entry.file_size <= MAX_SYMLINK_TARGET_BYTES,
+        "Sparkle Versions/Current target is too large",
+    )
+    try:
+        current_target = bundle_zip.read(current_entry).decode("utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        raise ValidationError(f"cannot read Sparkle Versions/Current: {error}") from error
+    require(
+        current_target == version_name,
+        "Sparkle Versions/Current must name the single version directory",
+    )
+    info_entry = bundle_zip.getinfo(info_name)
+    require(info_entry.file_size <= MAX_METADATA_BYTES, "Sparkle Info.plist is too large")
+    try:
+        sparkle_info = plistlib.loads(bundle_zip.read(info_entry))
+    except (OSError, plistlib.InvalidFileException) as error:
+        raise ValidationError(f"cannot parse Sparkle Info.plist: {error}") from error
+    validate_sparkle_info(sparkle_info, sparkle_version)
+
+
 def validate_archive(
     archive: pathlib.Path,
     version: str,
     public_key_b64: str,
+    sparkle_version: str | None = None,
 ) -> None:
     """Validate the app root and its release identity without extracting the ZIP."""
     try:
         with zipfile.ZipFile(archive) as bundle_zip:
             entries = bundle_zip.infolist()
             require(entries, "release archive is empty")
+            require(
+                len(entries) <= MAX_ARCHIVE_ENTRIES,
+                "release archive contains too many entries",
+            )
+            require(
+                len(bundle_zip.comment) <= MAX_ZIP_ENTRY_METADATA_BYTES,
+                "release archive comment is too large",
+            )
+            total_uncompressed_bytes = sum(entry.file_size for entry in entries)
+            require(
+                total_uncompressed_bytes <= MAX_ARCHIVE_UNCOMPRESSED_BYTES,
+                "release archive declared uncompressed size is too large",
+            )
 
             names: set[str] = set()
             payload_names: list[str] = []
             for entry in entries:
                 name = entry.filename
+                require(
+                    entry.file_size <= MAX_ARCHIVE_ENTRY_BYTES,
+                    f"release archive entry is too large: {name}",
+                )
+                require(
+                    len(name.encode("utf-8")) <= MAX_ARCHIVE_PATH_BYTES,
+                    "release archive entry path is too large",
+                )
+                require(
+                    len(entry.extra) <= MAX_ZIP_ENTRY_METADATA_BYTES
+                    and len(entry.comment) <= MAX_ZIP_ENTRY_METADATA_BYTES,
+                    f"release archive entry metadata is too large: {name}",
+                )
                 require(name not in names, f"release archive has duplicate entry: {name}")
                 names.add(name)
                 require("\x00" not in name, "release archive has a NUL in an entry name")
+                require(
+                    not any(ord(character) < 32 or ord(character) == 127 for character in name),
+                    f"release archive has a control character in an entry name: {name!r}",
+                )
                 require("\\" not in name, f"release archive has a backslash path: {name}")
                 path = pathlib.PurePosixPath(name)
                 require(not path.is_absolute(), f"release archive has an absolute path: {name}")
@@ -131,24 +398,16 @@ def validate_archive(
                 ),
                 "Rsnap.app does not contain Sparkle.framework",
             )
+            if sparkle_version is not None:
+                validate_archive_sparkle_graph(
+                    bundle_zip,
+                    names,
+                    sparkle_version,
+                )
     except (OSError, zipfile.BadZipFile, KeyError) as error:
         raise ValidationError(f"cannot read release archive: {error}") from error
 
-    require(isinstance(info, dict), "Info.plist root must be a dictionary")
-    expected_values = {
-        "CFBundleName": "Rsnap",
-        "CFBundleDisplayName": "Rsnap",
-        "CFBundleIdentifier": BUNDLE_IDENTIFIER,
-        "CFBundleShortVersionString": version,
-        "CFBundleVersion": version,
-        "SUFeedURL": SPARKLE_FEED_URL,
-        "SUPublicEDKey": public_key_b64,
-    }
-    for key, expected in expected_values.items():
-        require(
-            info.get(key) == expected,
-            f"Info.plist {key} must be {expected!r}",
-        )
+    validate_app_info(info, version, public_key_b64)
 
 
 def decode_signature(signature_text: str) -> bytes:
@@ -329,10 +588,11 @@ def validate_artifacts(
     tag: str,
     repository: str,
     public_key_b64: str = SPARKLE_PUBLIC_ED_KEY,
+    sparkle_version: str | None = None,
 ) -> None:
     """Validate the complete local release artifact set."""
     validate_identity(archive, appcast, checksum, version, tag, repository)
-    validate_archive(archive, version, public_key_b64)
+    validate_archive(archive, version, public_key_b64, sparkle_version)
     validate_appcast(
         appcast,
         archive,
@@ -346,10 +606,12 @@ def validate_artifacts(
 def parse_args(argv: list[str]) -> argparse.Namespace:
     """Parse the release validator command line."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--archive", required=True, type=pathlib.Path)
-    parser.add_argument("--appcast", required=True, type=pathlib.Path)
-    parser.add_argument("--checksum", required=True, type=pathlib.Path)
+    parser.add_argument("--app", type=pathlib.Path)
+    parser.add_argument("--archive", type=pathlib.Path)
+    parser.add_argument("--appcast", type=pathlib.Path)
+    parser.add_argument("--checksum", type=pathlib.Path)
     parser.add_argument("--version", required=True)
+    parser.add_argument("--sparkle-version", required=True)
     parser.add_argument("--tag", required=True)
     parser.add_argument("--repository", required=True)
     return parser.parse_args(argv)
@@ -359,14 +621,39 @@ def main(argv: list[str] | None = None) -> int:
     """Run the release artifact validator."""
     args = parse_args(sys.argv[1:] if argv is None else argv)
     try:
-        validate_artifacts(
-            archive=args.archive,
-            appcast=args.appcast,
-            checksum=args.checksum,
-            version=args.version,
-            tag=args.tag,
-            repository=args.repository,
+        require(
+            SEMVER_PATTERN.fullmatch(args.sparkle_version) is not None,
+            "Sparkle version must be X.Y.Z",
         )
+        if args.app is not None:
+            require(
+                args.archive is None and args.appcast is None and args.checksum is None,
+                "--app cannot be combined with archive artifacts",
+            )
+            require(args.repository == CANONICAL_REPOSITORY, "repository must be acg-box/rsnap")
+            require(args.tag == f"v{args.version}", "tag must be v followed by the release version")
+            validate_app(
+                args.app,
+                args.version,
+                args.sparkle_version,
+                SPARKLE_PUBLIC_ED_KEY,
+            )
+        else:
+            require(
+                args.archive is not None
+                and args.appcast is not None
+                and args.checksum is not None,
+                "--archive, --appcast, and --checksum are required together",
+            )
+            validate_artifacts(
+                archive=args.archive,
+                appcast=args.appcast,
+                checksum=args.checksum,
+                version=args.version,
+                sparkle_version=args.sparkle_version,
+                tag=args.tag,
+                repository=args.repository,
+            )
     except ValidationError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

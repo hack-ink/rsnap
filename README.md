@@ -199,6 +199,8 @@ release-scope validation beyond the deterministic and native smoke surfaces.
 ## Development
 
 ```sh
+npm ci --ignore-scripts
+npm run check
 cargo make checks
 cargo make test-host-reset
 cargo make test-macos-native-host-stage

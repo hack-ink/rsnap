@@ -6,6 +6,20 @@ updates:
     schedule:
       interval: 'daily'
       time: '00:00'
+  - package-ecosystem: 'npm'
+    directory: '/'
+    labels: []
+    schedule:
+      interval: 'daily'
+      time: '00:00'
+    groups:
+      typescript-toolchain:
+        patterns:
+          - '@types/node'
+          - 'oxfmt'
+          - 'oxlint'
+          - 'oxlint-tsgolint'
+          - 'typescript'
   - package-ecosystem: 'github-actions'
     directory: '/'
     labels: []

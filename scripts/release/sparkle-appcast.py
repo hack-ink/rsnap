@@ -63,10 +63,12 @@ def resolve_sign_update(repo_root: Path) -> Path:
         )
         return sign_update
 
-    artifact_root = repo_root / "native/macos-host/.build/artifacts"
-    for candidate in artifact_root.glob("**/bin/sign_update"):
-        if candidate.is_file() and os.access(candidate, os.X_OK):
-            return candidate
+    candidate = (
+        repo_root
+        / "native/macos-host/.build/artifacts/sparkle/Sparkle/bin/sign_update"
+    )
+    if candidate.is_file() and os.access(candidate, os.X_OK):
+        return candidate
     raise AppcastError(
         "Sparkle sign_update was not found; resolve or build native/macos-host first"
     )
@@ -74,8 +76,12 @@ def resolve_sign_update(repo_root: Path) -> Path:
 
 def sign_archive(sign_update: Path, archive: Path) -> tuple[str, int]:
     """Sign the archive and validate Sparkle's signature record."""
-    private_key = os.environ.get("SPARKLE_PRIVATE_ED_KEY", "")
-    require(private_key.strip() != "", "SPARKLE_PRIVATE_ED_KEY is required")
+    require(
+        os.environ.get("SPARKLE_PRIVATE_ED_KEY", "").strip() == "",
+        "generic SPARKLE_PRIVATE_ED_KEY is forbidden for Rsnap releases",
+    )
+    private_key = os.environ.get("RSNAP_SPARKLE_PRIVATE_ED_KEY", "")
+    require(private_key.strip() != "", "RSNAP_SPARKLE_PRIVATE_ED_KEY is required")
 
     result = subprocess.run(
         [str(sign_update), "--ed-key-file", "-", str(archive)],

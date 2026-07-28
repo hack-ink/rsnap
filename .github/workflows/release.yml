@@ -26,6 +26,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
+      sparkle_revision: ${{ steps.source.outputs.sparkle_revision }}
+      sparkle_version: ${{ steps.source.outputs.sparkle_version }}
       tag_commit: ${{ steps.source.outputs.tag_commit }}
       version: ${{ steps.source.outputs.version }}
     steps:
@@ -38,9 +40,27 @@ jobs:
       - name: Fetch canonical main
         run: git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
 
-      - name: Check tag and source
+      - name: Set up exact Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+
+      - name: Set up Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          cache: false
+          rustflags: ''
+
+      - name: Check tag, versions, lockfiles, and source
         id: source
-        run: scripts/release/validate-release-source.py
+        run: |
+          node scripts/release/validate-release-source.ts \
+            --tag "$GITHUB_REF_NAME" \
+            --event-commit "$GITHUB_SHA" \
+            --repository "$GITHUB_REPOSITORY" \
+            --base-ref refs/remotes/origin/main \
+            --github-output "$GITHUB_OUTPUT"
 
   build-macos:
     name: Build macOS release
@@ -51,6 +71,7 @@ jobs:
       RSNAP_RELEASE_COMMIT: ${{ needs.source.outputs.tag_commit }}
       RSNAP_RELEASE_TAG: ${{ github.ref_name }}
       RSNAP_RELEASE_VERSION: ${{ needs.source.outputs.version }}
+      RSNAP_SPARKLE_VERSION: ${{ needs.source.outputs.sparkle_version }}
     steps:
       - name: Fetch validated source
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -58,21 +79,36 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Verify source and Apple toolchain
-        run: |
-          set -euo pipefail
-          test "$(git rev-parse 'HEAD^{commit}')" = "$RSNAP_RELEASE_COMMIT"
-          test "$RUNNER_ARCH" = "ARM64"
-          test "$(uname -m)" = "arm64"
-          sw_vers
-          swift --version
-          xcodebuild -version
+      - name: Fetch canonical main
+        run: git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
+
+      - name: Set up exact Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
 
       - name: Set up Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
         with:
           cache: true
-          rustflags: ""
+          rustflags: ''
+
+      - name: Recheck source, versions, and Apple toolchain
+        run: |
+          node scripts/release/validate-release-source.ts \
+            --tag "$RSNAP_RELEASE_TAG" \
+            --event-commit "$GITHUB_SHA" \
+            --repository "$GITHUB_REPOSITORY" \
+            --base-ref refs/remotes/origin/main \
+            --expected-commit "$RSNAP_RELEASE_COMMIT" \
+            --expected-version "$RSNAP_RELEASE_VERSION" \
+            --expected-sparkle-version "$RSNAP_SPARKLE_VERSION"
+          test "$RUNNER_ARCH" = "ARM64"
+          test "$(uname -m)" = "arm64"
+          sw_vers
+          swift --version
+          xcodebuild -version
 
       - name: Install cargo-make
         uses: taiki-e/install-action@50414676f9f5d50a65992c6dd2ed02641263226c # v2.82.10
@@ -87,106 +123,18 @@ jobs:
           APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          SPARKLE_PRIVATE_ED_KEY: ${{ secrets.RSNAP_SPARKLE_PRIVATE_ED_KEY }}
-        run: |
-          set -euo pipefail
-          umask 077
+          RSNAP_RELEASE_OUTPUT_DIR: dist
+          RSNAP_SPARKLE_PRIVATE_ED_KEY: ${{ secrets.RSNAP_SPARKLE_PRIVATE_ED_KEY }}
+        run: scripts/release/package-macos.sh
 
-          for required_secret in \
-            APPLE_CERTIFICATE_P12_BASE64 \
-            APPLE_CERTIFICATE_PASSWORD \
-            APPLE_SIGNING_IDENTITY \
-            SPARKLE_PRIVATE_ED_KEY; do
-            if [[ -z "${!required_secret:-}" ]]; then
-              echo "Missing required secret: ${required_secret}" >&2
-              exit 1
-            fi
-          done
-          if [[ "$APPLE_SIGNING_IDENTITY" != "Apple Development: "* ]]; then
-            echo "APPLE_SIGNING_IDENTITY must name the approved Apple Development identity." >&2
-            exit 1
-          fi
-          echo "::warning::Personal Team distribution is signed with Apple Development and is not notarized."
-
-          CERT_PATH="$RUNNER_TEMP/apple-cert.p12"
-          KEYCHAIN_PATH="$RUNNER_TEMP/rsnap-build.keychain-db"
-          KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
-
-          cleanup() {
-            security delete-keychain "$KEYCHAIN_PATH" >/dev/null 2>&1 || true
-            rm -f "$CERT_PATH"
-          }
-          trap cleanup EXIT
-
-          CERT_PATH="$CERT_PATH" python3 - <<'PY'
-          import base64
-          import os
-          from pathlib import Path
-
-          Path(os.environ["CERT_PATH"]).write_bytes(
-              base64.b64decode(
-                  os.environ["APPLE_CERTIFICATE_P12_BASE64"],
-                  validate=True,
-              )
-          )
-          PY
-
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security import "$CERT_PATH" \
-            -k "$KEYCHAIN_PATH" \
-            -P "$APPLE_CERTIFICATE_PASSWORD" \
-            -T /usr/bin/codesign \
-            -T /usr/bin/security
-          security list-keychains -d user -s "$KEYCHAIN_PATH"
-          security default-keychain -d user -s "$KEYCHAIN_PATH"
-          security set-key-partition-list \
-            -S apple-tool:,apple: \
-            -s \
-            -k "$KEYCHAIN_PASSWORD" \
-            "$KEYCHAIN_PATH"
-          security find-identity -v -p codesigning "$KEYCHAIN_PATH" \
-            | grep -F -- "\"$APPLE_SIGNING_IDENTITY\""
-
-          RSNAP_NATIVE_HOST_FORCE_REBUILD=1 \
-          RSNAP_NATIVE_HOST_SIGN_IDENTITY="$APPLE_SIGNING_IDENTITY" \
-          RSNAP_NATIVE_HOST_SIGN_KEYCHAIN="$KEYCHAIN_PATH" \
-            ./scripts/build_and_run.sh stage
-
-          APP_PATH="target/rsnap-native-host/Rsnap.app"
-          test -d "$APP_PATH"
-          test "$(plutil -extract CFBundleName raw "$APP_PATH/Contents/Info.plist")" = "Rsnap"
-          test "$(plutil -extract CFBundleDisplayName raw "$APP_PATH/Contents/Info.plist")" = "Rsnap"
-          test "$(plutil -extract CFBundleIdentifier raw "$APP_PATH/Contents/Info.plist")" = "ink.hack.rsnap"
-          test "$(plutil -extract CFBundleVersion raw "$APP_PATH/Contents/Info.plist")" = "$RSNAP_RELEASE_VERSION"
-          test "$(plutil -extract CFBundleShortVersionString raw "$APP_PATH/Contents/Info.plist")" = "$RSNAP_RELEASE_VERSION"
-          test "$(plutil -extract SUFeedURL raw "$APP_PATH/Contents/Info.plist")" = \
-            "https://github.com/acg-box/rsnap/releases/latest/download/appcast.xml"
-          SPARKLE_PUBLIC_ED_KEY="$(tr -d '\r\n' < scripts/release/sparkle-public-ed-key.txt)"
-          test "$(plutil -extract SUPublicEDKey raw "$APP_PATH/Contents/Info.plist")" = \
-            "$SPARKLE_PUBLIC_ED_KEY"
-
-          ditto -c -k --sequesterRsrc --keepParent \
-            "$APP_PATH" \
-            "$MACOS_RELEASE_ASSET"
-          scripts/release/sparkle-appcast.py \
-            --archive "$MACOS_RELEASE_ASSET" \
-            --appcast "$MACOS_APPCAST_ASSET" \
-            --version "$RSNAP_RELEASE_VERSION" \
-            --tag "$RSNAP_RELEASE_TAG"
-          ARCHIVE_SHA256="$(shasum -a 256 "$MACOS_RELEASE_ASSET" | awk '{print $1}')"
-          printf '%s  %s\n' "$ARCHIVE_SHA256" "$MACOS_RELEASE_ASSET" \
-            >"$MACOS_CHECKSUM_ASSET"
-
-      - name: Upload release assets
+      - name: Upload signed release assets
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: rsnap-aarch64-apple-darwin
           path: |
-            ${{ env.MACOS_RELEASE_ASSET }}
-            ${{ env.MACOS_APPCAST_ASSET }}
-            ${{ env.MACOS_CHECKSUM_ASSET }}
+            dist/${{ env.MACOS_RELEASE_ASSET }}
+            dist/${{ env.MACOS_APPCAST_ASSET }}
+            dist/${{ env.MACOS_CHECKSUM_ASSET }}
           if-no-files-found: error
           retention-days: 7
 
@@ -203,20 +151,48 @@ jobs:
       RSNAP_RELEASE_COMMIT: ${{ needs.source.outputs.tag_commit }}
       RSNAP_RELEASE_TAG: ${{ github.ref_name }}
       RSNAP_RELEASE_VERSION: ${{ needs.source.outputs.version }}
+      RSNAP_SPARKLE_VERSION: ${{ needs.source.outputs.sparkle_version }}
     steps:
       - name: Fetch validated source
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          fetch-depth: 0
           persist-credentials: false
 
-      - name: Download release assets
+      - name: Fetch canonical main
+        run: git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
+
+      - name: Set up exact Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+
+      - name: Set up Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          cache: false
+          rustflags: ''
+
+      - name: Recheck source and versions
+        run: |
+          node scripts/release/validate-release-source.ts \
+            --tag "$RSNAP_RELEASE_TAG" \
+            --event-commit "$GITHUB_SHA" \
+            --repository "$GITHUB_REPOSITORY" \
+            --base-ref refs/remotes/origin/main \
+            --expected-commit "$RSNAP_RELEASE_COMMIT" \
+            --expected-version "$RSNAP_RELEASE_VERSION" \
+            --expected-sparkle-version "$RSNAP_SPARKLE_VERSION"
+
+      - name: Download signed release assets
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: rsnap-aarch64-apple-darwin
           path: artifacts
 
-      - name: Publish GitHub release
+      - name: Validate draft and publish
         env:
           GH_TOKEN: ${{ github.token }}
           RSNAP_RELEASE_INPUT_DIR: artifacts
-        run: scripts/release/publish-github-release.py
+        run: node scripts/release/publish-github-release.ts

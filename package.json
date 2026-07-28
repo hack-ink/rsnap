@@ -1,0 +1,38 @@
+{
+  "name": "rsnap-workspace",
+  "private": true,
+  "license": "GPL-3.0-only",
+  "type": "module",
+  "scripts": {
+    "check": "npm run format:check && npm run typecheck && npm run lint && npm test",
+    "format": "oxfmt scripts/release/*.ts scripts/release/tests/*.ts",
+    "format:check": "oxfmt --check scripts/release/*.ts scripts/release/tests/*.ts",
+    "lint": "oxlint --type-aware --type-check --deny-warnings scripts/release/*.ts scripts/release/tests/*.ts",
+    "test": "node --test scripts/release/tests/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "oxfmt": "0.60.0",
+    "oxlint": "1.75.0",
+    "oxlint-tsgolint": "7.0.2001",
+    "typescript": "7.0.2"
+  },
+  "devEngines": {
+    "packageManager": {
+      "name": "npm",
+      "version": "11.16.0",
+      "onFail": "error"
+    },
+    "runtime": {
+      "name": "node",
+      "version": "24.18.0",
+      "onFail": "error"
+    }
+  },
+  "engines": {
+    "node": "24.18.0",
+    "npm": "11.16.0"
+  },
+  "packageManager": "npm@11.16.0"
+}

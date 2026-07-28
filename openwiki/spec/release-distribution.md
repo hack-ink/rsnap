@@ -42,6 +42,13 @@ Defines:
 - The tag commit, workflow event commit, and checked-out commit are the same commit.
 - The tag commit is reachable from `origin/main`.
 - The tag version matches `Cargo.toml` and the Rsnap workspace packages in `Cargo.lock`.
+- The source checks use `scripts/release/validate-release-source.ts`. They verify the actual
+  `GITHUB_REF`, `GITHUB_REPOSITORY`, and `GITHUB_SHA` values.
+- The release tools use Node.js 24.18.0, npm 11.16.0, and the exact lockfile dependencies in
+  `package-lock.json`. Production release tools use only the Node.js standard library.
+- `native/macos-host/Package.swift` and `Package.resolved` must select the official Sparkle 2.9.4
+  source at revision `b6496a74a087257ef5e6da1c5b29a447a60f5bd7`. Swift release builds disable
+  automatic package resolution.
 - The built app `CFBundleVersion` and `CFBundleShortVersionString` match the tag version.
 
 ## Permission contract
@@ -56,9 +63,16 @@ Defines:
 - The package job runs on the standard GitHub-hosted ARM64 `macos-26` runner.
 - The job runs the release test surface before it creates release assets.
 - The app bundle name is `Rsnap.app`, and its bundle identifier is `ink.hack.rsnap`.
-- The current release identity is the organization-provided Apple Development identity.
+- The release identity is an Apple Development identity for Personal Team `RD3D4LH465`.
+- The temporary keychain contains exactly one valid certificate and private-key identity, and it
+  is the requested release identity.
+- The build and credential-free tests finish before the workflow writes signing credentials.
 - Signing starts at the innermost Sparkle code and finishes with `Rsnap.app`.
-- Each signed code object uses Hardened Runtime.
+- The signer accepts only the known Sparkle 2.9.4 code graph. `Versions/Current` must use one safe
+  direct-child version directory, and `Versions` must not contain another entry.
+- Each signed code object uses Hardened Runtime, the exact Apple Development authority, Personal
+  Team `RD3D4LH465`, and no timestamp. The outer app must not contain the
+  `get-task-allow` or `disable-library-validation` entitlement.
 - `codesign --deep` can verify the final bundle. It must not sign the bundle.
 - The Personal Team package is signed but not notarized.
 - Users can need the documented Gatekeeper override after download.
@@ -78,7 +92,7 @@ The appcast:
 - uses the release version from the validated tag
 - records the exact ZIP byte length
 - contains a Sparkle EdDSA signature made from the repository secret
-  `RSNAP_SPARKLE_PRIVATE_ED_KEY`, passed to the signer as `SPARKLE_PRIVATE_ED_KEY`
+  `RSNAP_SPARKLE_PRIVATE_ED_KEY`
 - verifies with the public key embedded in `Rsnap.app`
 
 The checksum file contains the lowercase SHA-256 digest of the final ZIP and the canonical ZIP
@@ -91,8 +105,15 @@ file name.
   boundary. The environment stores no release secrets.
 - The publisher validates local assets before it changes GitHub Release state.
 - The publisher creates or reuses a draft and uploads only the three required assets.
-- The publisher validates the exact remote asset set and downloaded bytes before publication.
-- The last state-changing operation makes the draft public.
+- The publisher reads all bounded release and asset pages. It validates the exact remote asset
+  names, states, safe sizes, canonical URLs, SHA-256 digests, and downloaded bytes.
+- Before publication, the publisher rechecks the remote annotated tag, its direct commit target,
+  reachability from `main`, every public stable release, and the exact draft ID.
+- The last state-changing operation makes the draft public and latest. The publisher does not
+  blindly retry this operation. After an unknown result, it reads the release state and validates
+  public remote bytes if publication succeeded.
+- A rerun for an already public same-tag release is read-only. It validates the public remote
+  bytes and does not apply the new-release monotonic-version gate.
 - A validation or upload failure leaves the release as a draft.
 - The workflow does not publish crates.io packages or non-macOS desktop archives.
 
