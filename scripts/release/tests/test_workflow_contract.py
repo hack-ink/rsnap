@@ -24,6 +24,7 @@ class WorkflowContractTests(unittest.TestCase):
 			"typescript-check:",
 			"runs-on: macos-26",
 			"cargo make test-release",
+			"scripts/release/tests/test-verify-sparkle-key.sh",
 			"npm ci --ignore-scripts",
 			"npm run format:check",
 			"npm run typecheck",

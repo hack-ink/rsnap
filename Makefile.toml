@@ -355,6 +355,9 @@ python3 -m unittest discover \
   -s scripts/release/tests \
   -p 'test_*.py'
 for test_script in scripts/release/tests/test-*.sh; do
+  if [ "$(basename "$test_script")" = "test-verify-sparkle-key.sh" ]; then
+    continue
+  fi
   "$test_script"
 done
 '''
@@ -471,6 +474,7 @@ dependencies = [
 	"test-release",
 ]
 script = '''
+scripts/release/tests/test-verify-sparkle-key.sh
 cargo test --workspace --all-targets --all-features --profile final-release
 cargo build -p rsnap-host-ffi --profile final-release
 swift package --package-path native/macos-host clean

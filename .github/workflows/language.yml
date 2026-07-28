@@ -170,6 +170,9 @@ jobs:
       - name: Run Swift tests
         run: cargo make test-swift
 
+      - name: Test Sparkle key verification
+        run: scripts/release/tests/test-verify-sparkle-key.sh
+
   toml-check:
     name: TOML check
     runs-on: ubuntu-latest
