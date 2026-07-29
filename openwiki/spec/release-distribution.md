@@ -5,7 +5,7 @@ type: "Spec"
 status: active
 authority: normative
 owner: acg-box/rsnap
-last_verified: 2026-07-28
+last_verified: 2026-07-29
 ---
 # Release Distribution Contract
 
@@ -30,7 +30,10 @@ Defines:
 
 ## Supported workflow shape
 
-- Normal CI runs for pull requests, `main`, and merge queues.
+- Normal CI runs Rust, TOML, TypeScript, and release-contract checks on Ubuntu for pull requests,
+  `main`, and merge queues.
+- Swift/AppKit format, lint, build, and test checks remain local development gates. A formal tag
+  release runs the release-mode native tests and build on macOS before it can package or publish.
 - A formal release starts only when an authorized operator pushes a stable `vX.Y.Z` tag.
 - The repository does not use a release-preparation, dry-run, or manual-dispatch release workflow.
 - The release workflow must not create a tag.
@@ -111,7 +114,8 @@ file name.
   names, states, safe sizes, canonical URLs, SHA-256 digests, and downloaded bytes.
 - Before publication, the publisher rechecks the remote annotated tag, its direct commit target,
   reachability from `main`, every public stable release, and the exact draft ID. Safe reads use
-  bounded convergence when GitHub's release listing temporarily omits a new draft.
+  bounded convergence when GitHub's release listing temporarily omits the expected draft or public
+  same-tag state; failure to converge before publication leaves the release private.
 - The last state-changing operation makes the draft public and latest. The publisher does not
   blindly retry this operation. After an unknown result, it reads the release state and validates
   public remote bytes if publication succeeded.

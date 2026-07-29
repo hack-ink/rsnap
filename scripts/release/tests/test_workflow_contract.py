@@ -19,12 +19,9 @@ class WorkflowContractTests(unittest.TestCase):
 			"pull_request:",
 			"merge_group:",
 			"rust-check:",
-			"swift-check:",
 			"toml-check:",
 			"typescript-check:",
-			"runs-on: macos-26",
 			"cargo make test-release",
-			"scripts/release/tests/test-verify-sparkle-key.sh",
 			"npm ci --ignore-scripts",
 			"npm run format:check",
 			"npm run typecheck",
@@ -32,6 +29,10 @@ class WorkflowContractTests(unittest.TestCase):
 			"npm test",
 		):
 			self.assertIn(required, workflow)
+		self.assertEqual(workflow.count("runs-on:"), 3)
+		self.assertEqual(workflow.count("runs-on: ubuntu-latest"), 3)
+		self.assertNotIn("swift-check:", workflow)
+		self.assertNotIn("runs-on: macos-26", workflow)
 
 	def test_release_permissions_and_jobs_are_minimal(self) -> None:
 		workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
@@ -59,6 +60,7 @@ class WorkflowContractTests(unittest.TestCase):
 		self.assertNotIn("APPLE_NOTARY_", workflow)
 		self.assertNotIn("notarytool", workflow)
 		self.assertIn("retention-days: 7", workflow)
+		self.assertIn("cargo make test-macos-release", workflow)
 		self.assertIn("scripts/release/package-macos.sh", workflow)
 		self.assertEqual(
 			workflow.count("node scripts/release/validate-release-source.ts"),

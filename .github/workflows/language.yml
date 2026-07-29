@@ -129,50 +129,6 @@ jobs:
       - name: Run Rust tests
         run: cargo make test-rust
 
-  swift-check:
-    name: Swift check
-    runs-on: macos-26
-    steps:
-      - name: Fetch latest code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-
-      - name: Print Apple toolchain
-        run: |
-          sw_vers
-          swift --version
-          xcodebuild -version
-
-      - name: Set up Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
-        with:
-          cache: true
-          rustflags: ''
-
-      - name: Install cargo-make
-        uses: taiki-e/install-action@50414676f9f5d50a65992c6dd2ed02641263226c # v2.82.10
-        with:
-          tool: cargo-make
-
-      - name: Run Swift format check
-        run: cargo make fmt-swift-check
-
-      - name: Run Swift style check
-        uses: hack-ink/vibe-style@567174c977a3fc09229c81aacf10bf93edc4fd70 # v0.2.3
-        with:
-          language: swift
-          workspace: true
-          args: --all-features
-          version: v0.2.3
-
-      - name: Run SwiftLint and strict build
-        run: cargo make check-swift
-
-      - name: Run Swift tests
-        run: cargo make test-swift
-
-      - name: Test Sparkle key verification
-        run: scripts/release/tests/test-verify-sparkle-key.sh
-
   toml-check:
     name: TOML check
     runs-on: ubuntu-latest
