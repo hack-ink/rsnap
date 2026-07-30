@@ -21,7 +21,7 @@ directories              = { version = "6.0" }
 dispatch2                = { version = "0.3" }
 fast_image_resize        = { version = "6.0" }
 font8x8                  = { version = "0.3" }
-fontdb                   = { version = "0.23" }
+fontdb                   = { version = "0.24" }
 fontdue                  = { version = "0.9" }
 image                    = { version = "0.25", default-features = false, features = ["png"] }
 objc2                    = { version = "0.6" }
