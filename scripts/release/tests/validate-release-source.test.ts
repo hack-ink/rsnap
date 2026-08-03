@@ -8,14 +8,14 @@ import { type Exec, type ExecRequest, type ExecResult } from '../release-contrac
 import { type SourceArguments, validateReleaseSource } from '../validate-release-source.ts';
 
 const COMMIT = 'a'.repeat(40);
-const SPARKLE_REVISION = 'b6496a74a087257ef5e6da1c5b29a447a60f5bd7';
+const SPARKLE_REVISION = '79bc9e872948e47877e76f194cb0c8e0412b0b90';
 
 async function fixture(): Promise<string> {
 	const root = await mkdtemp(join(tmpdir(), 'rsnap-source-test-'));
 	await mkdir(join(root, 'native/macos-host'), { recursive: true });
 	await writeFile(
 		join(root, 'native/macos-host/Package.swift'),
-		'.package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.4")\n',
+		'.package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.5")\n',
 	);
 	await writeFile(
 		join(root, 'native/macos-host/Package.resolved'),
@@ -25,7 +25,7 @@ async function fixture(): Promise<string> {
 					identity: 'sparkle',
 					kind: 'remoteSourceControl',
 					location: 'https://github.com/sparkle-project/Sparkle',
-					state: { revision: SPARKLE_REVISION, version: '2.9.4' },
+					state: { revision: SPARKLE_REVISION, version: '2.9.5' },
 				},
 			],
 		}),
@@ -103,7 +103,7 @@ void test('validates Cargo locked metadata and the exact Sparkle revision', asyn
 		assert.deepEqual(result, {
 			canonicalRepository: 'acg-box/rsnap',
 			sparkleRevision: SPARKLE_REVISION,
-			sparkleVersion: '2.9.4',
+			sparkleVersion: '2.9.5',
 			tagCommit: COMMIT,
 			version: '1.2.3',
 		});
@@ -148,7 +148,7 @@ void test('rejects a Package.resolved Sparkle revision mismatch', async () => {
 						identity: 'sparkle',
 						kind: 'remoteSourceControl',
 						location: 'https://github.com/sparkle-project/Sparkle',
-						state: { revision: 'c'.repeat(40), version: '2.9.4' },
+						state: { revision: 'c'.repeat(40), version: '2.9.5' },
 					},
 				],
 			}),
