@@ -8,9 +8,9 @@ export const CHECKSUM_NAME = `${ARCHIVE_NAME}.sha256`;
 export const ASSET_NAMES = [ARCHIVE_NAME, APPCAST_NAME, CHECKSUM_NAME] as const;
 export const EXPECTED_APPLE_IDENTITY_SUFFIX = 'RD3D4LH465';
 export const EXPECTED_APPLE_TEAM_ID = 'T54QFA7W2S';
-export const EXPECTED_SPARKLE_VERSION = '2.9.4';
+export const EXPECTED_SPARKLE_VERSION = '2.9.5';
 export const EXPECTED_SPARKLE_SOURCE = 'https://github.com/sparkle-project/Sparkle';
-export const EXPECTED_SPARKLE_REVISION = 'b6496a74a087257ef5e6da1c5b29a447a60f5bd7';
+export const EXPECTED_SPARKLE_REVISION = '79bc9e872948e47877e76f194cb0c8e0412b0b90';
 
 const STABLE_VERSION_PATTERN = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
 const MAX_VERSION_COMPONENT_DIGITS = 128;

@@ -2,10 +2,17 @@ import CoreGraphics
 import Foundation
 import RsnapHostBridge
 import RsnapNativeHostKit
+import Vision
 
 @main
 enum RsnapNativeHostKitProbe {
+	private static let textRecognitionWorkerProtocolArgument =
+		"--rsnap-text-recognition-worker-protocol-probe"
+
 	static func main() {
+		if runTextRecognitionWorkerProtocolProbe() {
+			return
+		}
 		assertScrimRoundedExclusionKeepsCornersMasked()
 		assertScrimOverlappingRoundedExclusionStaysClear()
 		assertScrimExclusionPreservesExistingPixels()
@@ -17,6 +24,9 @@ enum RsnapNativeHostKitProbe {
 		assertScrollCaptureObservedInputAcceptsSourceWindowGutter()
 		assertFrozenToolbarPlannerDisablesEditingDuringScroll()
 		assertFrozenToolbarPlannerPlacesStyleRowAndHitsControls()
+		assertTextRecognitionNeuralEngineSelection()
+		assertTextRecognitionWorkerFraming()
+		assertTextRecognitionWorkerLifecycle()
 		assertSoftwareUpdateModeResolution()
 		assertManualUpdateCheckRemainsAvailable()
 		assertImmediateInstallGateWaitsForCaptureIdle()
@@ -104,6 +114,114 @@ enum RsnapNativeHostKitProbe {
 		else {
 			fatalError("software update mode should treat disabled checks as off")
 		}
+	}
+
+	private static func assertTextRecognitionNeuralEngineSelection() {
+		let request = VNRecognizeTextRequest()
+		guard TextRecognitionHelper.configureNeuralEngine(for: request),
+			let device = request.computeDevice(for: .main),
+			case .neuralEngine = device
+		else {
+			fatalError("text recognition should assign its main stage to the Neural Engine")
+		}
+		guard
+			TextRecognitionHelper.isE5RecompileRequired(
+				"e5rt_execution_stream_operation_create_precompiled_compute_operation_with_options call failed (Code: 13)"
+			)
+		else {
+			fatalError("text recognition should recognize the E5 recompile signal")
+		}
+		guard TextRecognitionHelper.isE5RecompileRequired("e5rtError(operation failed, 13)")
+		else {
+			fatalError("text recognition should recognize the bridged E5 recompile signal")
+		}
+		guard
+			TextRecognitionHelper.isE5RecompileRequired(
+				"e5rt operation failed (Code: 12)"
+			) == false
+		else {
+			fatalError("text recognition should not treat a bad device state as recompile")
+		}
+	}
+
+	private static func assertTextRecognitionWorkerFraming() {
+		let firstPayload = Data("first OCR request".utf8)
+		let secondPayload = Data("second OCR request".utf8)
+		let pipe = Pipe()
+		do {
+			try TextRecognitionHelper.writeFrame(firstPayload, to: pipe.fileHandleForWriting)
+			try TextRecognitionHelper.writeFrame(secondPayload, to: pipe.fileHandleForWriting)
+			try pipe.fileHandleForWriting.close()
+			guard
+				try TextRecognitionHelper.readFrame(from: pipe.fileHandleForReading)
+					== firstPayload,
+				try TextRecognitionHelper.readFrame(from: pipe.fileHandleForReading)
+					== secondPayload,
+				try TextRecognitionHelper.readFrame(from: pipe.fileHandleForReading) == nil
+			else {
+				fatalError("text recognition worker should preserve consecutive framed requests")
+			}
+		} catch {
+			fatalError("text recognition worker framing failed: \(error)")
+		}
+	}
+
+	private static func assertTextRecognitionWorkerLifecycle() {
+		let executableURL = URL(fileURLWithPath: ProcessInfo.processInfo.arguments[0])
+		let worker = TextRecognitionWorker(
+			executableURL: executableURL,
+			argument: textRecognitionWorkerProtocolArgument
+		)
+		do {
+			let first = try worker.perform(encodedInput: Data("first".utf8))
+			let second = try worker.perform(encodedInput: Data("second".utf8))
+			guard first.text == "1:first", second.text == "2:second" else {
+				fatalError("text recognition worker should reuse one healthy process")
+			}
+
+			worker.restart()
+			let restarted = try worker.perform(encodedInput: Data("third".utf8))
+			guard restarted.text == "1:third" else {
+				fatalError("text recognition worker should reset state after restart")
+			}
+		} catch {
+			fatalError("text recognition worker lifecycle failed: \(error)")
+		}
+	}
+
+	private static func runTextRecognitionWorkerProtocolProbe() -> Bool {
+		guard
+			ProcessInfo.processInfo.arguments.dropFirst().first
+				== textRecognitionWorkerProtocolArgument
+		else {
+			return false
+		}
+
+		var requestCount = 0
+		do {
+			while let request = try TextRecognitionHelper.readFrame(from: .standardInput) {
+				requestCount += 1
+				let requestText = String(decoding: request, as: UTF8.self)
+				let output: [String: Any] = [
+					"protocolVersion": 1,
+					"text": "\(requestCount):\(requestText)",
+					"observationCount": 1,
+					"recognizedLines": 1,
+					"recognizedCharacters": requestText.count,
+					"visionRequestMilliseconds": 0.0,
+					"processingMilliseconds": 0.0,
+				]
+				let encodedOutput = try PropertyListSerialization.data(
+					fromPropertyList: output,
+					format: .binary,
+					options: 0
+				)
+				try TextRecognitionHelper.writeFrame(encodedOutput, to: .standardOutput)
+			}
+		} catch {
+			return true
+		}
+		return true
 	}
 
 	private static func assertSelectionSizeTextUsesDisplayPointDimensions() {

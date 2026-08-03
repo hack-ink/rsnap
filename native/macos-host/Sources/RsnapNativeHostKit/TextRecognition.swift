@@ -109,7 +109,9 @@ extension CaptureSessionController {
 				observationCount: 0,
 				recognizedLines: 0,
 				recognizedCharacters: 0,
-				cacheHit: cacheHit
+				cacheHit: cacheHit,
+				computePath: result.computePath,
+				workerAttempts: result.workerAttempts
 			)
 			NativeHostTelemetry.captureWarning(
 				"capture.recognize_text_failed",
@@ -151,7 +153,9 @@ extension CaptureSessionController {
 			observationCount: result.observationCount,
 			recognizedLines: result.recognizedLines,
 			recognizedCharacters: result.recognizedCharacters,
-			cacheHit: cacheHit
+			cacheHit: cacheHit,
+			computePath: result.computePath,
+			workerAttempts: result.workerAttempts
 		)
 
 		if result.text.isEmpty == false {
@@ -274,7 +278,9 @@ extension CaptureSessionController {
 		observationCount: Int,
 		recognizedLines: Int,
 		recognizedCharacters: Int,
-		cacheHit: Bool
+		cacheHit: Bool,
+		computePath: String = "unavailable",
+		workerAttempts: Int = 0
 	) {
 		NativeHostTelemetry.recognizeTextTiming(
 			captureID: run.captureID,
@@ -295,7 +301,9 @@ extension CaptureSessionController {
 			recognitionLevel: run.recognitionLevel,
 			languageCorrection: run.usesLanguageCorrection,
 			automaticLanguageDetection: run.automaticallyDetectsLanguage,
-			cacheHit: cacheHit
+			cacheHit: cacheHit,
+			computePath: computePath,
+			workerAttempts: workerAttempts
 		)
 	}
 }

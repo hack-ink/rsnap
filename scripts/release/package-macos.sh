@@ -8,7 +8,7 @@ ARCHIVE_NAME="rsnap-aarch64-apple-darwin.zip"
 APPCAST_NAME="appcast.xml"
 CHECKSUM_NAME="${ARCHIVE_NAME}.sha256"
 EXPECTED_APPLE_IDENTITY_SUFFIX="RD3D4LH465"
-EXPECTED_SPARKLE_VERSION="2.9.4"
+EXPECTED_SPARKLE_VERSION="2.9.5"
 PUBLIC_KEY_FILE="$ROOT_DIR/scripts/release/sparkle-public-ed-key.txt"
 
 required_values=(

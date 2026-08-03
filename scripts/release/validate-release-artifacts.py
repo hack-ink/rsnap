@@ -168,7 +168,7 @@ def resolve_sparkle_layout(app: pathlib.Path) -> tuple[pathlib.Path, pathlib.Pat
 
 
 def validate_sparkle_graph(app: pathlib.Path, sparkle_version: str) -> None:
-    """Validate the known Sparkle 2.9.4 code graph without hard-coding its version letter."""
+    """Validate the known Sparkle 2.9.5 code graph without hard-coding its version letter."""
     framework, version_root = resolve_sparkle_layout(app)
     for relative_path in SPARKLE_COMPONENTS:
         require(

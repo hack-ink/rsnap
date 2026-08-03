@@ -21,7 +21,7 @@ let package = Package(
 		.executable(name: "RsnapNativeHost", targets: ["RsnapNativeHost"]),
 	],
 	dependencies: [
-		.package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.4"),
+		.package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.5"),
 		.package(url: "https://github.com/SimplyDanny/SwiftLintPlugins", exact: "0.65.0"),
 	],
 	targets: [

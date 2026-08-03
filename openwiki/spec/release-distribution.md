@@ -47,10 +47,10 @@ Defines:
 - The tag version matches `Cargo.toml` and the Rsnap workspace packages in `Cargo.lock`.
 - The source checks use `scripts/release/validate-release-source.ts`. They verify the actual
   `GITHUB_REF`, `GITHUB_REPOSITORY`, and `GITHUB_SHA` values.
-- The release tools use Node.js 24.18.0, npm 11.16.0, and the exact lockfile dependencies in
+- The release tools use Node.js 26.5.1, npm 12.0.2, and the exact lockfile dependencies in
   `package-lock.json`. Production release tools use only the Node.js standard library.
-- `native/macos-host/Package.swift` and `Package.resolved` must select the official Sparkle 2.9.4
-  source at revision `b6496a74a087257ef5e6da1c5b29a447a60f5bd7`. Swift release builds disable
+- `native/macos-host/Package.swift` and `Package.resolved` must select the official Sparkle 2.9.5
+  source at revision `79bc9e872948e47877e76f194cb0c8e0412b0b90`. Swift release builds disable
   automatic package resolution.
 - The built app `CFBundleVersion` and `CFBundleShortVersionString` match the tag version.
 
@@ -73,7 +73,7 @@ Defines:
   that keychain the sole user search-list keychain and the user default keychain.
 - The build and credential-free tests finish before the workflow writes signing credentials.
 - Signing starts at the innermost Sparkle code and finishes with `Rsnap.app`.
-- The signer accepts only the known Sparkle 2.9.4 code graph. `Versions/Current` must use one safe
+- The signer accepts only the known Sparkle 2.9.5 code graph. `Versions/Current` must use one safe
   direct-child version directory, and `Versions` must not contain another entry.
 - Each signed code object uses Hardened Runtime, the exact Apple Development authority,
   code-signing `TeamIdentifier` `T54QFA7W2S`, and no timestamp. The outer app must not contain the

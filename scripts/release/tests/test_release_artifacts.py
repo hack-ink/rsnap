@@ -98,7 +98,7 @@ class ReleaseFixture:
                 plistlib.dumps(
                     {
                         "CFBundleIdentifier": "org.sparkle-project.Sparkle",
-                        "CFBundleShortVersionString": "2.9.4",
+                        "CFBundleShortVersionString": "2.9.5",
                     }
                 ),
             )
@@ -210,7 +210,7 @@ class ReleaseFixture:
             "tag": self.tag,
             "repository": VALIDATOR.CANONICAL_REPOSITORY,
             "public_key_b64": self.public_key_b64,
-            "sparkle_version": "2.9.4",
+            "sparkle_version": "2.9.5",
         }
         arguments.update(overrides)
         VALIDATOR.validate_artifacts(**arguments)

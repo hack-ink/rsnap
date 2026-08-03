@@ -451,10 +451,12 @@ enum NativeHostTelemetry {
 		recognitionLevel: String,
 		languageCorrection: Bool,
 		automaticLanguageDetection: Bool,
-		cacheHit: Bool = false
+		cacheHit: Bool = false,
+		computePath: String,
+		workerAttempts: Int
 	) {
 		captureTimingLogger.info(
-			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) captureID=\(captureID, privacy: .public) event=capture_timing.recognize_text totalMs=\(totalMilliseconds, format: .fixed(precision: 2), privacy: .public) captureImageMs=\(captureImageMilliseconds, format: .fixed(precision: 2), privacy: .public) visionRequestMs=\(visionRequestMilliseconds, format: .fixed(precision: 2), privacy: .public) resultProcessingMs=\(resultProcessingMilliseconds, format: .fixed(precision: 2), privacy: .public) clearPasteboardMs=\(clearPasteboardMilliseconds, format: .fixed(precision: 2), privacy: .public) writePasteboardMs=\(writePasteboardMilliseconds, format: .fixed(precision: 2), privacy: .public) success=\(success, privacy: .public) outcome=\(outcome, privacy: .public) failureStage=\(failureStage, privacy: .public) width=\(width, privacy: .public) height=\(height, privacy: .public) observationCount=\(observationCount, privacy: .public) recognizedLines=\(recognizedLines, privacy: .public) recognizedCharacters=\(recognizedCharacters, privacy: .public) recognitionLevel=\(recognitionLevel, privacy: .public) languageCorrection=\(languageCorrection, privacy: .public) automaticLanguageDetection=\(automaticLanguageDetection, privacy: .public) cacheHit=\(cacheHit, privacy: .public)"
+			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) captureID=\(captureID, privacy: .public) event=capture_timing.recognize_text totalMs=\(totalMilliseconds, format: .fixed(precision: 2), privacy: .public) captureImageMs=\(captureImageMilliseconds, format: .fixed(precision: 2), privacy: .public) visionRequestMs=\(visionRequestMilliseconds, format: .fixed(precision: 2), privacy: .public) resultProcessingMs=\(resultProcessingMilliseconds, format: .fixed(precision: 2), privacy: .public) clearPasteboardMs=\(clearPasteboardMilliseconds, format: .fixed(precision: 2), privacy: .public) writePasteboardMs=\(writePasteboardMilliseconds, format: .fixed(precision: 2), privacy: .public) success=\(success, privacy: .public) outcome=\(outcome, privacy: .public) failureStage=\(failureStage, privacy: .public) width=\(width, privacy: .public) height=\(height, privacy: .public) observationCount=\(observationCount, privacy: .public) recognizedLines=\(recognizedLines, privacy: .public) recognizedCharacters=\(recognizedCharacters, privacy: .public) recognitionLevel=\(recognitionLevel, privacy: .public) languageCorrection=\(languageCorrection, privacy: .public) automaticLanguageDetection=\(automaticLanguageDetection, privacy: .public) cacheHit=\(cacheHit, privacy: .public) computePath=\(computePath, privacy: .public) workerAttempts=\(workerAttempts, privacy: .public)"
 		)
 	}
 

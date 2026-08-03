@@ -5,7 +5,7 @@ type: "Spec"
 status: active
 authority: normative
 owner: acg-box/rsnap
-last_verified: 2026-07-06
+last_verified: 2026-07-29
 ---
 # Telemetry Schema
 
@@ -174,8 +174,15 @@ Do not log captured image contents, OCR text, clipboard contents, or user-entere
 text. Paths may be logged only when they identify app resources or log artifacts.
 
 OCR telemetry may log timing, image dimensions, Vision request configuration, observation counts,
-non-empty line counts, character counts, and final outcome labels. It must not log recognized text,
-candidate strings, image contents, clipboard contents, or annotation text.
+non-empty line counts, character counts, final outcome labels, `computePath`, and `workerAttempts`.
+For worker-backed Vision results, `computePath=restartable_neural_engine_worker` identifies the
+selected execution path. `workerAttempts=1` is the initial worker request and `workerAttempts=2`
+means the engine used its one permitted fresh-process retry after a worker transport failure or an
+E5RT code `13` recompile-required response. Engine failures before worker dispatch retain
+`computePath=restartable_neural_engine_worker` with `workerAttempts=0`; timing records produced
+without any engine result, including capture-image and pasteboard-write failures, use
+`computePath=unavailable` and `workerAttempts=0`. It must not log recognized text, candidate
+strings, image contents, clipboard contents, or annotation text.
 
 ## Related concepts
 

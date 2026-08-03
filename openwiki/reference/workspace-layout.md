@@ -5,7 +5,7 @@ type: "Reference"
 status: active
 authority: normative
 owner: acg-box/rsnap
-last_verified: 2026-07-28
+last_verified: 2026-07-29
 ---
 # Workspace Layout Reference
 
@@ -222,10 +222,17 @@ The main host-kit files are split by responsibility:
   capture-image export orchestration
 - `PreparedExport.swift`: frozen export render request construction,
   prepared export invalidation, scroll/annotation quiet-delay scheduling, and OCR image prewarming
-- `TextRecognition.swift`: OCR host-effect orchestration and recognized
-  text pasteboard publication
-- `TextRecognitionEngine.swift`: Vision OCR prewarming, background request execution, and
-  OCR result extraction
+- `TextRecognition.swift`: OCR host-effect orchestration, stale-job rejection, telemetry, and
+  recognized-text pasteboard publication
+- `TextRecognitionEngine.swift`: background OCR scheduling, RGBA request serialization, worker
+  reuse, and one fresh-process retry after a worker transport failure or an E5RT
+  recompile-required response
+- `TextRecognitionWorker.swift`: restartable child-process lifecycle and a bidirectional Unix-domain
+  socket channel with `120s` send and receive timeouts
+- `TextRecognitionHelper.swift`: versioned, length-prefixed binary-property-list protocol, input
+  validation, Vision request execution with the main compute stage assigned to the Neural Engine,
+  and result extraction; `RsnapNativeHostMain.swift` dispatches
+  `--rsnap-text-recognition-helper` before AppKit startup
 - `CaptureRuntime.swift`: shared monitor/window lookup, overlay refresh,
   teardown, status message, and capture-stream release helpers
 - `CaptureChrome.swift`: shared native chrome metrics, palette, and drawing geometry
@@ -383,6 +390,39 @@ The main host-kit files are split by responsibility:
   `PermissionsSettingsPanel.swift`, and `AboutSettingsPanel.swift`: focused settings
   panels for appearance, capture shortcuts/input, output location/naming, capture-frame presets,
   permission/setup controls, and about/update controls
+
+The OCR host effect implements the host-owned capability boundary required by the
+[Platform Host Boundary](../spec/platform-host-boundary.md) and reports its execution through the
+[Telemetry Schema](../spec/telemetry.md):
+
+```mermaid
+sequenceDiagram
+    participant CS as Capture Session
+    participant TE as Text Recognition Engine
+    participant WK as Restartable OCR Worker
+    participant VS as Vision
+    participant PB as Pasteboard
+    CS->>TE: Submit prepared frozen image
+    TE->>WK: Send versioned RGBA frame
+    WK->>VS: Run accurate OCR on Neural Engine
+    alt Worker transport failure or E5RT code 13
+        WK-->>TE: Return failure or close channel
+        TE->>WK: Restart process and retry once
+        WK->>VS: Run OCR with fresh model state
+    end
+    VS-->>WK: Return observations or failure
+    WK-->>TE: Return versioned result
+    TE-->>CS: Complete on main actor
+    CS->>PB: Publish nonempty recognized text
+```
+
+The diagram shows healthy worker reuse and the single fresh-process recovery attempt.
+
+The engine keeps one worker warm across healthy requests. It invalidates that process after channel
+or protocol errors and explicitly restarts it before retrying an E5RT code `13` recompile signal;
+other Vision failures return without retry. The capture session still owns stale-job rejection, user
+status, pasteboard publication, and teardown. `RsnapNativeHostKitProbe/main.swift` checks Neural
+Engine selection, frame boundaries, healthy-process reuse, and explicit restart behavior.
 
 It depends on:
 
