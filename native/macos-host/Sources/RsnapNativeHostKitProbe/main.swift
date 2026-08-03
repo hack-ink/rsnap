@@ -118,11 +118,24 @@ enum RsnapNativeHostKitProbe {
 
 	private static func assertTextRecognitionNeuralEngineSelection() {
 		let request = VNRecognizeTextRequest()
-		guard TextRecognitionHelper.configureNeuralEngine(for: request),
-			let device = request.computeDevice(for: .main),
-			case .neuralEngine = device
-		else {
-			fatalError("text recognition should assign its main stage to the Neural Engine")
+		let supportedDevices = try? request.supportedComputeStageDevices
+		let exposesNeuralEngine =
+			supportedDevices?[.main]?.contains { device in
+				if case .neuralEngine = device {
+					return true
+				}
+				return false
+			} == true
+		let configured = TextRecognitionHelper.configureNeuralEngine(for: request)
+		if exposesNeuralEngine {
+			guard configured,
+				let device = request.computeDevice(for: .main),
+				case .neuralEngine = device
+			else {
+				fatalError("text recognition should assign its main stage to the Neural Engine")
+			}
+		} else if configured {
+			fatalError("text recognition should fail closed when the Neural Engine is unavailable")
 		}
 		guard
 			TextRecognitionHelper.isE5RecompileRequired(
