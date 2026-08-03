@@ -404,13 +404,17 @@ sequenceDiagram
     participant PB as Pasteboard
     CS->>TE: Submit prepared frozen image
     TE->>WK: Send versioned RGBA frame
-    WK->>VS: Run accurate OCR on Neural Engine
-    alt Worker transport failure or E5RT code 13
-        WK-->>TE: Return failure or close channel
-        TE->>WK: Restart process and retry once
-        WK->>VS: Run OCR with fresh model state
+    alt Vision advertises Neural Engine
+        WK->>VS: Run accurate OCR on Neural Engine
+        alt Worker transport failure or E5RT code 13
+            WK-->>TE: Return failure or close channel
+            TE->>WK: Restart process and retry once
+            WK->>VS: Run OCR with fresh model state
+        end
+        VS-->>WK: Return observations or failure
+    else Neural Engine unavailable
+        WK-->>TE: Return capability failure
     end
-    VS-->>WK: Return observations or failure
     WK-->>TE: Return versioned result
     TE-->>CS: Complete on main actor
     CS->>PB: Publish nonempty recognized text
@@ -421,8 +425,9 @@ The diagram shows healthy worker reuse and the single fresh-process recovery att
 The engine keeps one worker warm across healthy requests. It invalidates that process after channel
 or protocol errors and explicitly restarts it before retrying an E5RT code `13` recompile signal;
 other Vision failures return without retry. The capture session still owns stale-job rejection, user
-status, pasteboard publication, and teardown. `RsnapNativeHostKitProbe/main.swift` checks Neural
-Engine selection, frame boundaries, healthy-process reuse, and explicit restart behavior.
+status, pasteboard publication, and teardown. `RsnapNativeHostKitProbe/main.swift` checks that Neural
+Engine selection succeeds when Vision advertises the device and fails closed otherwise, along with
+frame boundaries, healthy-process reuse, and explicit restart behavior.
 
 It depends on:
 
