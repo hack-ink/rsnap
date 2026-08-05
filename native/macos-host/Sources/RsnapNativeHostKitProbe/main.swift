@@ -18,7 +18,7 @@ enum RsnapNativeHostKitProbe {
 		assertScrimExclusionPreservesExistingPixels()
 		assertRoundedExclusionMaskKeepsCornersFilled()
 		assertCaptureFrameEffectExpandsExportCanvas()
-		assertSelectionSizeTextUsesDisplayPointDimensions()
+		assertSelectionSizeTextUsesBackingScaleFactor()
 		assertCaptureOverlayLocalPointKeepsScreenEdgesVisible()
 		assertScrollCaptureViewportPointAcceptsFlippedGlobalMouseCoordinates()
 		assertScrollCaptureObservedInputAcceptsSourceWindowGutter()
@@ -237,16 +237,22 @@ enum RsnapNativeHostKitProbe {
 		return true
 	}
 
-	private static func assertSelectionSizeTextUsesDisplayPointDimensions() {
+	private static func assertSelectionSizeTextUsesBackingScaleFactor() {
 		guard
 			SelectionSizeText.displayText(
-				for: CGRect(x: 0, y: 0, width: 3_008, height: 1_692)
+				for: CGRect(x: 0, y: 0, width: 3_008, height: 1_692),
+				scale: 1
 			) == "3008x1692px",
 			SelectionSizeText.displayText(
-				for: CGRect(x: 10, y: 20, width: 12.4, height: 9.6)
-			) == "12x10px"
+				for: CGRect(x: 0, y: 0, width: 800, height: 450),
+				scale: 2
+			) == "1600x900px @2x",
+			SelectionSizeText.displayText(
+				for: CGRect(x: 10, y: 20, width: 12.4, height: 9.6),
+				scale: 1.5
+			) == "19x14px @1.5x"
 		else {
-			fatalError("selection size badge should report display-point dimensions")
+			fatalError("selection size badge should report physical pixels and display scale")
 		}
 	}
 

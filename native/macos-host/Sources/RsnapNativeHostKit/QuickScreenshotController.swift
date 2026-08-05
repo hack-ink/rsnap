@@ -773,7 +773,10 @@ private final class QuickScreenshotSelectionView: NSView {
 	}
 
 	private func selectionSizeText(for rect: CGRect) -> String {
-		SelectionSizeText.displayText(for: rect)
+		SelectionSizeText.displayText(
+			for: rect,
+			scale: window?.screen?.backingScaleFactor ?? 1
+		)
 	}
 
 	private func localRect(from globalRect: CGRect) -> CGRect {

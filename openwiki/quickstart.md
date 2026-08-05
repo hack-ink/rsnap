@@ -61,7 +61,7 @@ Update the source that owns a claim, then run `openwiki code --update --print` a
 
 - Some migrated current-state references contain filenames that predate the July 2026 Swift file-boundary rename; verify exact source paths before acting.
 - Existing metadata historically marked decisions, references, research, and evidence as `authority: normative` even where their bodies define a weaker authority. The migration preserves provenance but uses lane meaning and page prose when interpreting authority.
-- Some scroll-capture pages still describe v0.2.5 as current while the workspace manifest reports version 0.3.4. Preserve those dated claims as history and use current source for release status.
+- Some scroll-capture pages still describe v0.2.5 as current while the workspace manifest reports version 0.3.5. Preserve those dated claims as history and use current source for release status.
 - The pen-beautification and frozen-toolbar-anchor contracts have reported implementation gaps. Treat their specifications as requirements and validate current code before claiming compliance.
 
 ## Backlog
