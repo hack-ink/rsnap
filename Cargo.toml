@@ -10,7 +10,7 @@ homepage    = "https://hack.ink/rsnap"
 license     = "GPL-3.0"
 readme      = "README.md"
 repository  = "https://github.com/acg-box/rsnap"
-version     = "0.3.4"
+version     = "0.3.5"
 
 [workspace.dependencies]
 arboard                  = { version = "3.6" }
@@ -40,8 +40,8 @@ tracing-appender         = { version = "0.2" }
 tracing-subscriber       = { version = "0.3", features = ["env-filter"] }
 ttf-parser               = { version = "0.25" }
 
-rsnap-capture-core = { version = "0.3.4", path = "packages/rsnap-capture-core" }
-rsnap-host-ffi     = { version = "0.3.4", path = "packages/rsnap-host-ffi" }
+rsnap-capture-core = { version = "0.3.5", path = "packages/rsnap-capture-core" }
+rsnap-host-ffi     = { version = "0.3.5", path = "packages/rsnap-host-ffi" }
 
 [profile.final-release]
 inherits = "release"
