@@ -111,7 +111,7 @@ jobs:
           xcodebuild -version
 
       - name: Install cargo-make
-        uses: taiki-e/install-action@67729d5c413db75907f0ad1e39bb04b9c868ff60 # v2.85.7
+        uses: taiki-e/install-action@37f7c5781271959fb65b6b35224e28652ff2b63d # v2.87.0
         with:
           tool: cargo-make
 
