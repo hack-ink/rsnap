@@ -116,7 +116,7 @@ jobs:
         run: cargo make fmt-rust-check
 
       - name: Run Rust style check
-        uses: acg-box/vibe-style@3a0959eac5363c4c427382bae1d80d87ecadb702 # v0.2.3
+        uses: acg-box/vibe-style@3f39ce57b54def2cdd95a330faae299f5eb55014 # v0.2.5
         with:
           language: rust
           workspace: true
